@@ -22,6 +22,7 @@ export function NotebookLibrary({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { title: string; description: string }>>({});
   const [notebooks, setNotebooks] = useState(initialNotebooks);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const sorted = useMemo(
@@ -40,6 +41,11 @@ export function NotebookLibrary({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, description }),
       });
+
+      if (!response.ok) {
+        return;
+      }
+
       const payload = await response.json();
       setNotebooks((current) => [payload.notebook.notebook, ...current]);
       setTitle("");
@@ -55,6 +61,7 @@ export function NotebookLibrary({
   };
 
   const startEdit = (notebook: NotebookRow) => {
+    setSaveError(null);
     setEditingId(notebook.id);
     setDrafts((current) => ({
       ...current,
@@ -69,7 +76,7 @@ export function NotebookLibrary({
     const draft = drafts[id];
 
     if (!draft?.title.trim()) {
-      setEditingId(null);
+      setSaveError("标题不能为空");
       return;
     }
 
@@ -82,12 +89,24 @@ export function NotebookLibrary({
           description: draft.description || null,
         }),
       });
+
+      if (!response.ok) {
+        setSaveError("保存失败，请重试");
+        return;
+      }
+
       const payload = await response.json();
       setNotebooks((current) =>
         current.map((item) => (item.id === id ? payload.notebook : item)),
       );
       setEditingId(null);
+      setSaveError(null);
     });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setSaveError(null);
   };
 
   return (
@@ -162,11 +181,18 @@ export function NotebookLibrary({
               <div className="mb-4 flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   {editingId === notebook.id ? (
-                    <div className="grid gap-2">
+                    <div
+                      className="grid gap-2"
+                      onBlur={(event) => {
+                        const nextTarget = event.relatedTarget as Node | null;
+                        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+                          void saveEdit(notebook.id);
+                        }
+                      }}
+                    >
                       <input
                         autoFocus
                         className="rounded-xl border border-line bg-fog px-3 py-2 text-xl font-semibold text-slate-900 outline-none focus:border-accent"
-                        onBlur={() => saveEdit(notebook.id)}
                         onChange={(event) =>
                           setDrafts((current) => ({
                             ...current,
@@ -175,14 +201,19 @@ export function NotebookLibrary({
                         }
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
-                            event.currentTarget.blur();
+                            event.preventDefault();
+                            void saveEdit(notebook.id);
+                          }
+
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            cancelEdit();
                           }
                         }}
                         value={draft.title}
                       />
                       <input
                         className="rounded-xl border border-line bg-fog px-3 py-2 text-sm text-slate-600 outline-none focus:border-accent"
-                        onBlur={() => saveEdit(notebook.id)}
                         onChange={(event) =>
                           setDrafts((current) => ({
                             ...current,
@@ -191,11 +222,20 @@ export function NotebookLibrary({
                         }
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
-                            event.currentTarget.blur();
+                            event.preventDefault();
+                            void saveEdit(notebook.id);
+                          }
+
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            cancelEdit();
                           }
                         }}
                         value={draft.description}
                       />
+                      {saveError ? (
+                        <div className="text-xs text-red-500">{saveError}</div>
+                      ) : null}
                     </div>
                   ) : (
                     <>

@@ -34,7 +34,7 @@ export function SourceViewer({ source }: { source: SourceDetail | null }) {
   if (!source) {
     return (
       <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-line bg-white/60 p-8 text-center text-sm text-slate-500">
-        选择一个输入源后，这里会显示网页正文、视频字幕或 PDF 预览。
+        选择输入源
       </div>
     );
   }
@@ -73,7 +73,7 @@ export function SourceViewer({ source }: { source: SourceDetail | null }) {
 
         {source.status === "needs_input" ? (
           <div className="rounded-2xl border border-amber-200 bg-amberSoft p-4 text-sm leading-6 text-amber-900">
-            该视频没有拿到现成字幕。你可以在左侧重新导入时补充字幕文本，工作台会继续使用该 source。
+            缺少字幕，请补充字幕文本后重新导入。
           </div>
         ) : null}
 

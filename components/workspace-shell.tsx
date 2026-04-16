@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   ChevronLeft,
-  ChevronRight,
   FileText,
   Globe,
   History,
@@ -67,6 +66,19 @@ type SourceDetail = {
   }>;
 };
 
+function LoadingDots() {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span>生成中</span>
+      <span className="inline-flex gap-1">
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+      </span>
+    </span>
+  );
+}
+
 export function WorkspaceShell({
   initialSnapshot,
   initialThreads,
@@ -83,6 +95,8 @@ export function WorkspaceShell({
   const [models, setModels] = useState(initialModels);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [isCompact, setIsCompact] = useState(false);
   const [sourceType, setSourceType] = useState<"web" | "youtube" | "pdf">("web");
   const [sourceInput, setSourceInput] = useState("");
   const [transcriptText, setTranscriptText] = useState("");
@@ -111,6 +125,29 @@ export function WorkspaceShell({
   const chatModels = models.filter((model) => model.kind === "chat");
 
   useEffect(() => {
+    const updateLayout = () => {
+      const compact = window.innerWidth < 1280;
+      setIsCompact(compact);
+
+      if (compact) {
+        setLeftCollapsed(true);
+        setRightCollapsed(true);
+        setHistoryOpen(false);
+      } else {
+        setLeftCollapsed(false);
+        setRightCollapsed(false);
+      }
+    };
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+
+    return () => {
+      window.removeEventListener("resize", updateLayout);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!selectedSourceId) {
       setSelectedSource(null);
       return;
@@ -137,6 +174,28 @@ export function WorkspaceShell({
       .catch(() => setModels(initialModels));
   }, [initialModels]);
 
+  const syncLocalNote = (nextMarkdown: string) => {
+    const updatedAt = new Date().toISOString();
+    setSnapshot((current) => ({
+      ...current,
+      notebook: {
+        ...current.notebook,
+        updatedAt,
+      },
+      note: current.note
+        ? {
+            ...current.note,
+            markdown: nextMarkdown,
+            updatedAt,
+          }
+        : {
+            id: "local-note",
+            markdown: nextMarkdown,
+            updatedAt,
+          },
+    }));
+  };
+
   const refreshSnapshot = async () => {
     const response = await fetch(`/api/notebooks/${snapshot.notebook.id}`);
     const payload = (await response.json()) as NotebookSnapshot;
@@ -144,6 +203,28 @@ export function WorkspaceShell({
     setMarkdown(payload.note?.markdown || "");
     if (!selectedSourceId && payload.sources[0]) {
       setSelectedSourceId(payload.sources[0].id);
+    }
+  };
+
+  const openLeftPanel = () => {
+    if (isCompact) {
+      setRightCollapsed(true);
+    }
+    setLeftCollapsed(false);
+  };
+
+  const openRightPanel = () => {
+    if (isCompact) {
+      setLeftCollapsed(true);
+    }
+    setRightCollapsed(false);
+  };
+
+  const closeCompactPanels = () => {
+    if (isCompact) {
+      setLeftCollapsed(true);
+      setRightCollapsed(true);
+      setHistoryOpen(false);
     }
   };
 
@@ -166,6 +247,11 @@ export function WorkspaceShell({
           method: "POST",
           body: formData,
         });
+
+        if (!response.ok) {
+          return;
+        }
+
         const payload = await response.json();
         await refreshSnapshot();
         if (payload.sourceId) {
@@ -189,9 +275,14 @@ export function WorkspaceShell({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ modelKey: selectedModel }),
         });
+
+        if (!response.ok) {
+          return;
+        }
+
         const payload = await response.json();
         setMarkdown(payload.markdown);
-        await refreshSnapshot();
+        syncLocalNote(payload.markdown);
       } finally {
         setSummaryLoading(false);
       }
@@ -200,15 +291,26 @@ export function WorkspaceShell({
 
   const saveSummary = () => {
     startTransition(async () => {
-      await fetch(`/api/notebooks/${snapshot.notebook.id}/summary`, {
+      const response = await fetch(`/api/notebooks/${snapshot.notebook.id}/summary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ markdown, modelKey: selectedModel }),
       });
-      await refreshSnapshot();
+
+      if (!response.ok) {
+        return;
+      }
+
+      syncLocalNote(markdown);
       setSaveState("saved");
       window.setTimeout(() => setSaveState("idle"), 1400);
     });
+  };
+
+  const startNewChat = () => {
+    setActiveThreadId(null);
+    setHistoryOpen(false);
+    setQuestion("");
   };
 
   const sendMessage = () => {
@@ -229,9 +331,15 @@ export function WorkspaceShell({
             modelKey: selectedModel,
           }),
         });
+
+        if (!response.ok) {
+          return;
+        }
+
         const payload = await response.json();
         setThreads(payload.threads);
         setActiveThreadId(payload.threadId);
+        setHistoryOpen(false);
         setQuestion("");
       } finally {
         setChatLoading(false);
@@ -255,7 +363,7 @@ export function WorkspaceShell({
     <main className="flex h-screen overflow-hidden bg-fog px-4 py-4">
       <div className="flex min-h-0 w-full flex-col gap-4">
         <header className="flex h-[68px] shrink-0 items-center justify-between rounded-[28px] border border-white/70 bg-white/90 px-5 shadow-panel">
-          <div className="flex min-w-0 items-center gap-4">
+          <div className="flex min-w-0 items-center gap-3">
             <Link
               className="inline-flex items-center gap-2 rounded-2xl border border-line bg-fog px-4 py-2 text-sm text-slate-600 transition hover:border-accent hover:text-accent"
               href="/"
@@ -263,14 +371,28 @@ export function WorkspaceShell({
               <ChevronLeft className="h-4 w-4" />
               笔记库
             </Link>
-            <div className="min-w-0">
-              <div className="truncate text-lg font-semibold text-slate-900">
-                {snapshot.notebook.title}
-              </div>
+            <div className="truncate text-lg font-semibold text-slate-900">
+              {snapshot.notebook.title}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 xl:hidden">
+              <button
+                className="rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700"
+                onClick={openLeftPanel}
+                type="button"
+              >
+                资料
+              </button>
+              <button
+                className="rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700"
+                onClick={openRightPanel}
+                type="button"
+              >
+                聊天
+              </button>
+            </div>
             <button
               className="rounded-2xl border border-line bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-accent hover:text-accent"
               onClick={exportMarkdown}
@@ -289,12 +411,32 @@ export function WorkspaceShell({
         </header>
 
         <section
-          className="grid min-h-0 flex-1 gap-4 transition-[grid-template-columns] duration-300"
-          style={{ gridTemplateColumns }}
+          className={cn(
+            "min-h-0 flex-1",
+            isCompact ? "relative overflow-hidden" : "grid gap-4 transition-[grid-template-columns] duration-300",
+          )}
+          style={isCompact ? undefined : { gridTemplateColumns }}
         >
-          <aside className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel">
+          {isCompact && (!leftCollapsed || !rightCollapsed) ? (
+            <button
+              aria-label="关闭侧栏"
+              className="absolute inset-0 z-10 bg-slate-900/20"
+              onClick={closeCompactPanels}
+              type="button"
+            />
+          ) : null}
+
+          <aside
+            className={cn(
+              "flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
+              isCompact
+                ? "absolute inset-y-0 left-0 z-20 w-[min(88vw,360px)] transition-transform duration-300"
+                : "",
+              isCompact && leftCollapsed ? "-translate-x-[110%]" : "translate-x-0",
+            )}
+          >
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-line/70 px-4">
-              {!leftCollapsed ? <div className="font-semibold text-slate-900">输入源</div> : null}
+              {!leftCollapsed || isCompact ? <div className="font-semibold text-slate-900">输入源</div> : null}
               <button
                 className="rounded-full border border-line p-2 text-slate-500 transition hover:border-accent hover:text-accent"
                 onClick={() => setLeftCollapsed((value) => !value)}
@@ -304,7 +446,7 @@ export function WorkspaceShell({
               </button>
             </div>
 
-            {leftCollapsed ? (
+            {!isCompact && leftCollapsed ? (
               <div className="flex flex-1 flex-col items-center gap-3 overflow-y-auto p-3">
                 {snapshot.sources.map((source) => {
                   const Icon =
@@ -375,7 +517,7 @@ export function WorkspaceShell({
                     <textarea
                       className="min-h-20 w-full rounded-2xl border border-line bg-fog px-4 py-3 text-sm outline-none focus:border-accent"
                       onChange={(event) => setTranscriptText(event.target.value)}
-                      placeholder="可选：字幕文本"
+                      placeholder="字幕文本"
                       value={transcriptText}
                     />
                   ) : null}
@@ -426,7 +568,12 @@ export function WorkspaceShell({
             )}
           </aside>
 
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel">
+          <section
+            className={cn(
+              "flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
+              isCompact ? "h-full" : "",
+            )}
+          >
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-line/70 px-5">
               <div className="font-semibold text-slate-900">摘要</div>
               <div className="flex items-center gap-2">
@@ -440,7 +587,7 @@ export function WorkspaceShell({
                   type="button"
                 >
                   <RefreshCcw className={cn("h-4 w-4", summaryLoading && "animate-spin")} />
-                  {summaryLoading ? "生成中..." : "刷新"}
+                  {summaryLoading ? <LoadingDots /> : "刷新"}
                 </button>
                 <button
                   className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent"
@@ -462,38 +609,40 @@ export function WorkspaceShell({
             </div>
           </section>
 
-          <aside className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel">
+          <aside
+            className={cn(
+              "relative flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
+              isCompact
+                ? "absolute inset-y-0 right-0 z-20 w-[min(92vw,420px)] transition-transform duration-300"
+                : "",
+              isCompact && rightCollapsed ? "translate-x-[110%]" : "translate-x-0",
+            )}
+          >
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-line/70 px-4">
-              {!rightCollapsed ? <div className="font-semibold text-slate-900">聊天</div> : null}
+              {!rightCollapsed || isCompact ? <div className="font-semibold text-slate-900">聊天</div> : null}
               <div className="flex items-center gap-2">
-                {!rightCollapsed ? (
-                  <>
-                    <button
-                      className="rounded-full border border-line p-2 text-slate-500 transition hover:border-accent hover:text-accent"
-                      onClick={() => setActiveThreadId(null)}
-                      title="新建聊天"
-                      type="button"
-                    >
-                      <MessageSquarePlus className="h-4 w-4" />
-                    </button>
-                    {threads.length > 0 ? (
-                      <div className="relative">
-                        <History className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                        <select
-                          className="h-9 max-w-[160px] rounded-full border border-line bg-white pl-9 pr-3 text-sm text-slate-600 outline-none"
-                          onChange={(event) => setActiveThreadId(event.target.value || null)}
-                          value={activeThread?.id || ""}
-                        >
-                          <option value="">新聊天</option>
-                          {threads.map((thread) => (
-                            <option key={thread.id} value={thread.id}>
-                              {thread.title}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : null}
-                  </>
+                {(!rightCollapsed || isCompact) && threads.length > 0 ? (
+                  <button
+                    className={cn(
+                      "rounded-full border p-2 text-slate-500 transition hover:border-accent hover:text-accent",
+                      historyOpen ? "border-accent text-accent" : "border-line",
+                    )}
+                    onClick={() => setHistoryOpen((value) => !value)}
+                    title="历史"
+                    type="button"
+                  >
+                    <History className="h-4 w-4" />
+                  </button>
+                ) : null}
+                {(!rightCollapsed || isCompact) ? (
+                  <button
+                    className="rounded-full border border-line p-2 text-slate-500 transition hover:border-accent hover:text-accent"
+                    onClick={startNewChat}
+                    title="新建聊天"
+                    type="button"
+                  >
+                    <MessageSquarePlus className="h-4 w-4" />
+                  </button>
                 ) : null}
                 <button
                   className="rounded-full border border-line p-2 text-slate-500 transition hover:border-accent hover:text-accent"
@@ -505,18 +654,40 @@ export function WorkspaceShell({
               </div>
             </div>
 
-            {rightCollapsed ? (
-              <div className="flex flex-1 items-start justify-center p-3">
-                <button
-                  className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-white text-slate-500"
-                  onClick={() => setRightCollapsed(false)}
-                  type="button"
-                >
-                  <PanelRightOpen className="h-5 w-5" />
-                </button>
-              </div>
-            ) : (
+            {!rightCollapsed || isCompact ? (
               <>
+                {historyOpen ? (
+                  <div className="absolute inset-x-4 top-20 z-20 max-h-[52vh] overflow-y-auto rounded-[24px] border border-line bg-white p-3 shadow-panel">
+                    <button
+                      className="mb-2 w-full rounded-2xl border border-line bg-fog px-4 py-3 text-left text-sm text-slate-700 transition hover:border-accent hover:text-accent"
+                      onClick={startNewChat}
+                      type="button"
+                    >
+                      新聊天
+                    </button>
+                    <div className="grid gap-2">
+                      {threads.map((thread) => (
+                        <button
+                          className={cn(
+                            "rounded-2xl border px-4 py-3 text-left text-sm transition",
+                            activeThreadId === thread.id
+                              ? "border-accent bg-accentSoft text-accent"
+                              : "border-line bg-white text-slate-700 hover:border-accent",
+                          )}
+                          key={thread.id}
+                          onClick={() => {
+                            setActiveThreadId(thread.id);
+                            setHistoryOpen(false);
+                          }}
+                          type="button"
+                        >
+                          <div className="truncate font-medium">{thread.title}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-5">
                   {chatMessages.length > 0 ? (
                     chatMessages.map((message) => (
@@ -553,7 +724,7 @@ export function WorkspaceShell({
                     ))
                   ) : (
                     <div className="rounded-[24px] border border-dashed border-line bg-white/70 p-8 text-sm leading-7 text-slate-600">
-                      你好，我可以基于当前笔记回答问题。
+                      输入问题开始对话。
                     </div>
                   )}
                   {chatLoading ? (
@@ -570,6 +741,7 @@ export function WorkspaceShell({
                       onChange={(event) => setQuestion(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                          event.preventDefault();
                           sendMessage();
                         }
                       }}
@@ -616,6 +788,16 @@ export function WorkspaceShell({
                   </div>
                 </div>
               </>
+            ) : (
+              <div className="flex flex-1 items-start justify-center p-3">
+                <button
+                  className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-white text-slate-500"
+                  onClick={() => setRightCollapsed(false)}
+                  type="button"
+                >
+                  <PanelRightOpen className="h-5 w-5" />
+                </button>
+              </div>
             )}
           </aside>
         </section>
