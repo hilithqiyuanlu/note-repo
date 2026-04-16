@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import "@/app/globals.css";
 
 export const metadata: Metadata = {
-  title: "豆脑",
+  title: "豆花",
   description: "本地优先的三栏知识工作台",
 };
 

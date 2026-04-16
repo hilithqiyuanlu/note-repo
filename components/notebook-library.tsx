@@ -119,7 +119,7 @@ export function NotebookLibrary({
       <div className="mb-10 flex items-start justify-between gap-6">
         <div>
           <h1 className="text-4xl font-semibold tracking-tight text-slate-900">
-            豆脑
+            豆花
           </h1>
         </div>
 

@@ -845,7 +845,7 @@ export function WorkspaceShell({
               href="/"
             >
               <ChevronLeft className="h-4 w-4" />
-              豆脑
+              豆花
             </Link>
             {isEditingTitle ? (
               <input

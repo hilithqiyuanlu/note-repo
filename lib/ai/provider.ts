@@ -305,7 +305,7 @@ export async function generateSummary(
 ) {
   const segments = listNotebookSegments(notebookId, sourceIds);
   const notebook = getNotebookSnapshot(notebookId);
-  const notebookTitle = notebook?.notebook.title ?? "豆脑";
+  const notebookTitle = notebook?.notebook.title ?? "豆花";
   const settings = getSettings();
   const target = resolveChatTarget(modelKey, settings);
 

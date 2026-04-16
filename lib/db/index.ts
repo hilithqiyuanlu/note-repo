@@ -185,10 +185,10 @@ function bootstrap(db: Database.Database) {
         'Ollama / qwen3.5:4b',
         'ollama',
         'nomic-embed-text',
-        1,
+        0,
         'http',
-        '127.0.0.1',
-        7897,
+        NULL,
+        NULL,
         'localhost,127.0.0.1,::1',
         ?
       )`,
@@ -222,16 +222,10 @@ function bootstrap(db: Database.Database) {
            local_chat_base_url = COALESCE(NULLIF(local_chat_base_url, ''), 'http://127.0.0.1:11434/v1'),
            local_chat_model = COALESCE(NULLIF(local_chat_model, ''), 'qwen3.5:4b'),
            local_chat_label = COALESCE(NULLIF(local_chat_label, ''), 'Ollama / qwen3.5:4b'),
-           proxy_enabled = CASE
-             WHEN proxy_enabled = 0
-               AND (proxy_host IS NULL OR proxy_host = '')
-               AND proxy_port IS NULL
-             THEN 1
-             ELSE COALESCE(proxy_enabled, 1)
-           END,
+           proxy_enabled = 0,
            proxy_protocol = COALESCE(NULLIF(proxy_protocol, ''), 'http'),
-           proxy_host = COALESCE(NULLIF(proxy_host, ''), '127.0.0.1'),
-           proxy_port = COALESCE(proxy_port, 7897),
+           proxy_host = NULL,
+           proxy_port = NULL,
            proxy_bypass_hosts = COALESCE(NULLIF(proxy_bypass_hosts, ''), 'localhost,127.0.0.1,::1'),
            updated_at = ?
        WHERE id = 1`,

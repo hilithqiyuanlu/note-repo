@@ -53,7 +53,7 @@ export async function ingestWeb(url: string): Promise<IngestResult> {
   const response = ensureRemoteOk(
     await fetchWithTimeout(url, {
       headers: {
-        "User-Agent": "NoteRepo/0.3",
+        "User-Agent": "Douhua/0.4",
       },
     }),
     "网页抓取失败",

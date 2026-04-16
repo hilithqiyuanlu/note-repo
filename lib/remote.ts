@@ -1,11 +1,3 @@
-import http from "node:http";
-import https from "node:https";
-
-import { HttpProxyAgent } from "http-proxy-agent";
-import { HttpsProxyAgent } from "https-proxy-agent";
-
-import { getSettings } from "@/lib/db/queries";
-
 type AppErrorCode =
   | "timeout"
   | "unreachable"
@@ -13,8 +5,6 @@ type AppErrorCode =
   | "invalid_response"
   | "parsing_failed"
   | "missing_content";
-
-type AgentLike = http.Agent | https.Agent;
 
 type FetchInitWithTimeout = RequestInit & {
   timeoutMs?: number;
@@ -76,83 +66,20 @@ function isNetworkLike(error: unknown) {
   );
 }
 
-function normalizeHostname(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function isBypassedHost(hostname: string, bypassHosts: string[]) {
-  const normalized = normalizeHostname(hostname);
-  return bypassHosts.some((host) => {
-    const candidate = normalizeHostname(host);
-    return candidate === normalized || (candidate.startsWith(".") && normalized.endsWith(candidate));
-  });
-}
-
-function resolveProxyUrl() {
-  const settings = getSettings();
-  if (!settings.proxyEnabled || !settings.proxyHost || !settings.proxyPort) {
-    return null;
-  }
-
-  return `${settings.proxyProtocol}://${settings.proxyHost}:${settings.proxyPort}`;
-}
-
-function shouldUseProxy(url: string | URL, scope: "remote" | "local" = "remote") {
-  if (scope === "local") {
-    return false;
-  }
-
-  const proxyUrl = resolveProxyUrl();
-  if (!proxyUrl) {
-    return false;
-  }
-
-  try {
-    const parsed = typeof url === "string" ? new URL(url) : url;
-    const settings = getSettings();
-    const bypassHosts = (settings.proxyBypassHosts || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    return !isBypassedHost(parsed.hostname, bypassHosts);
-  } catch {
-    return false;
-  }
-}
-
-function buildAgent(url: string | URL, scope: "remote" | "local" = "remote"): AgentLike | undefined {
-  if (!shouldUseProxy(url, scope)) {
-    return undefined;
-  }
-
-  const proxyUrl = resolveProxyUrl();
-  if (!proxyUrl) {
-    return undefined;
-  }
-
-  const target = typeof url === "string" ? new URL(url) : url;
-  return target.protocol === "http:"
-    ? new HttpProxyAgent(proxyUrl)
-    : new HttpsProxyAgent(proxyUrl);
-}
-
-export function buildHttpAgent(url: string | URL, scope: "remote" | "local" = "remote") {
-  return buildAgent(url, scope);
+export function buildHttpAgent(_url: string | URL, _scope: "remote" | "local" = "remote") {
+  return undefined;
 }
 
 export async function fetchWithTimeout(input: string | URL, init?: FetchInitWithTimeout) {
   const controller = new AbortController();
   const timeoutMs = init?.timeoutMs ?? 10_000;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const agent = buildAgent(input, init?.proxyScope ?? "remote");
 
   try {
     return await (fetchImpl as any)(input, {
       ...init,
       signal: controller.signal,
       cache: init?.cache ?? "no-store",
-      ...(agent ? { agent } : {}),
     });
   } catch (error) {
     if (isTimeoutLike(error)) {

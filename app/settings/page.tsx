@@ -26,7 +26,7 @@ export default async function SettingsPage({
           href={backHref}
         >
           <ChevronLeft className="h-4 w-4" />
-          {backHref === "/" ? "返回豆脑" : "返回工作台"}
+          {backHref === "/" ? "返回豆花" : "返回工作台"}
         </Link>
       </div>
 
