@@ -1,0 +1,7 @@
+.next
+node_modules
+storage
+*.log
+pnpm-lock.yaml
+package-lock.json
+*.sqlite
