@@ -7,7 +7,7 @@ import type { IngestResult } from "@/lib/ingest/types";
 export async function ingestWeb(url: string): Promise<IngestResult> {
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "cuflow-bot/0.1",
+      "User-Agent": "NoteRepo/0.2",
     },
     cache: "no-store",
   });

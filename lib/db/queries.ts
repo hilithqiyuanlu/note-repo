@@ -89,6 +89,30 @@ export function deleteNotebook(notebookId: string) {
   db.delete(notebooks).where(eq(notebooks.id, notebookId)).run();
 }
 
+export function updateNotebook(
+  notebookId: string,
+  input: { title?: string; description?: string | null },
+) {
+  const current = getDb().select().from(notebooks).where(eq(notebooks.id, notebookId)).get();
+
+  if (!current) {
+    return null;
+  }
+
+  const updatedAt = nowIso();
+  getDb()
+    .update(notebooks)
+    .set({
+      title: input.title?.trim() || current.title,
+      description: input.description === undefined ? current.description : input.description,
+      updatedAt,
+    })
+    .where(eq(notebooks.id, notebookId))
+    .run();
+
+  return getNotebookSnapshot(notebookId);
+}
+
 export function getNotebookSnapshot(notebookId: string): NotebookSnapshot | null {
   const db = getDb();
   const notebook = db.select().from(notebooks).where(eq(notebooks.id, notebookId)).get();
