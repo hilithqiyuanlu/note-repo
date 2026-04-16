@@ -22,6 +22,7 @@ export function NotebookLibrary({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { title: string; description: string }>>({});
   const [notebooks, setNotebooks] = useState(initialNotebooks);
+  const [deleteTarget, setDeleteTarget] = useState<NotebookRow | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -55,8 +56,12 @@ export function NotebookLibrary({
 
   const deleteNotebook = (id: string) => {
     startTransition(async () => {
-      await fetch(`/api/notebooks/${id}`, { method: "DELETE" });
+      const response = await fetch(`/api/notebooks/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        return;
+      }
       setNotebooks((current) => current.filter((item) => item.id !== id));
+      setDeleteTarget(null);
     });
   };
 
@@ -258,7 +263,7 @@ export function NotebookLibrary({
                 </div>
                 <button
                   className="rounded-full border border-line p-2 text-slate-500 transition hover:border-red-300 hover:text-red-500"
-                  onClick={() => deleteNotebook(notebook.id)}
+                  onClick={() => setDeleteTarget(notebook)}
                   type="button"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -279,6 +284,34 @@ export function NotebookLibrary({
           );
         })}
       </section>
+
+      {deleteTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 px-6">
+          <div className="w-full max-w-sm rounded-[28px] border border-white/70 bg-white p-6 shadow-panel">
+            <h2 className="text-lg font-semibold text-slate-900">删除笔记</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              确认删除「{deleteTarget.title}」？该操作不可恢复。
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                className="rounded-2xl border border-line bg-white px-4 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
+                onClick={() => setDeleteTarget(null)}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="rounded-2xl bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50"
+                disabled={isPending}
+                onClick={() => deleteNotebook(deleteTarget.id)}
+                type="button"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

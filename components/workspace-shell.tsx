@@ -14,6 +14,7 @@ import {
   PanelRightOpen,
   RefreshCcw,
   Save,
+  Download,
   Send,
   Settings2,
   Upload,
@@ -415,12 +416,25 @@ export function WorkspaceShell({
     openLeftPanel();
   };
 
-  const exportMarkdown = () => {
-    startTransition(async () => {
-      await fetch(`/api/notebooks/${snapshot.notebook.id}/export-markdown`, {
-        method: "POST",
-      });
+  const exportMarkdown = async () => {
+    const response = await fetch(`/api/notebooks/${snapshot.notebook.id}/summary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markdown, modelKey: selectedModel }),
     });
+
+    if (response.ok) {
+      syncLocalNote(markdown);
+    }
+
+    const exportResponse = await fetch(`/api/notebooks/${snapshot.notebook.id}/export-markdown`, {
+      method: "POST",
+    });
+
+    if (exportResponse.ok) {
+      setSaveState("saved");
+      window.setTimeout(() => setSaveState("idle"), 1400);
+    }
   };
 
   const gridTemplateColumns = `${leftCollapsed ? "72px" : "minmax(280px, 360px)"} minmax(0, 1fr) ${
@@ -461,13 +475,6 @@ export function WorkspaceShell({
                 聊天
               </button>
             </div>
-            <button
-              className="rounded-2xl border border-line bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-accent hover:text-accent"
-              onClick={exportMarkdown}
-              type="button"
-            >
-              导出
-            </button>
             <Link
               className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-accent hover:text-accent"
               href="/settings"
@@ -665,23 +672,38 @@ export function WorkspaceShell({
                   type="button"
                 >
                   <RefreshCcw className={cn("h-4 w-4", summaryLoading && "animate-spin")} />
-                  {summaryLoading ? <LoadingDots /> : "刷新"}
+                  {summaryLoading ? <LoadingDots /> : "生成"}
                 </button>
-                <button
-                  className="inline-flex items-center rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
-                  onClick={() => setIsEditingSummary((value) => !value)}
-                  type="button"
-                >
-                  {isEditingSummary ? "预览" : "编辑"}
-                </button>
-                <button
-                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent"
-                  onClick={saveSummary}
-                  type="button"
-                >
-                  <Save className="h-4 w-4" />
-                  保存
-                </button>
+                {isEditingSummary ? (
+                  <button
+                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent"
+                    onClick={saveSummary}
+                    type="button"
+                  >
+                    <Save className="h-4 w-4" />
+                    保存
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="inline-flex items-center rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
+                      onClick={() => setIsEditingSummary(true)}
+                      type="button"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent"
+                      onClick={() => {
+                        void exportMarkdown();
+                      }}
+                      type="button"
+                    >
+                      <Download className="h-4 w-4" />
+                      导出
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
