@@ -15,6 +15,7 @@ const chatSchema = z.object({
   message: z.string().trim().min(1),
   useWebSearch: z.boolean().default(false),
   modelKey: z.string().optional(),
+  sourceIds: z.array(z.string()).optional(),
 });
 
 export async function POST(
@@ -38,6 +39,7 @@ export async function POST(
     message: payload.message,
     useWebSearch: payload.useWebSearch,
     modelKey: payload.modelKey,
+    sourceIds: payload.sourceIds,
   });
 
   appendMessage({

@@ -21,25 +21,33 @@ export async function ingestWeb(url: string): Promise<IngestResult> {
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
 
-  if (!article?.textContent) {
+  const fallbackTitle = dom.window.document.title || url;
+  const textSource =
+    article?.textContent?.trim() || dom.window.document.body?.textContent?.trim() || "";
+
+  if (!textSource) {
     throw new Error("未提取到正文");
   }
 
-  const paragraphs = article.textContent
+  const paragraphs = textSource
     .split(/\n+/)
     .map((content) => ({ content }))
     .filter((item) => item.content.trim().length > 20);
 
+  if (paragraphs.length === 0) {
+    throw new Error("正文内容过短或不可解析");
+  }
+
   return {
     type: "web",
-    title: article.title || url,
+    title: article?.title || fallbackTitle,
     input: url,
     url,
     metadata: {
-      byline: article.byline,
-      excerpt: article.excerpt,
-      siteName: article.siteName,
-      length: article.length,
+      byline: article?.byline ?? null,
+      excerpt: article?.excerpt ?? null,
+      siteName: article?.siteName ?? null,
+      length: article?.length ?? textSource.length,
     },
     segments: chunkParagraphs(paragraphs),
   };

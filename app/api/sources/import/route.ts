@@ -36,13 +36,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing import params" }, { status: 400 });
   }
 
-  const sourceId = await importSource({
-    type: type as "web" | "youtube" | "pdf",
-    input,
-    notebookId,
-    file,
-    transcriptText,
-  });
+  try {
+    const sourceId = await importSource({
+      type: type as "web" | "youtube" | "pdf",
+      input,
+      notebookId,
+      file,
+      transcriptText,
+    });
 
-  return NextResponse.json({ sourceId }, { status: 201 });
+    return NextResponse.json({ sourceId }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "导入失败",
+      },
+      { status: 400 },
+    );
+  }
 }

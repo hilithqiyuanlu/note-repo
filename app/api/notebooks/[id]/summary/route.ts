@@ -7,6 +7,7 @@ import { getNotebookSnapshot, upsertNote } from "@/lib/db/queries";
 const summarySchema = z.object({
   markdown: z.string().optional(),
   modelKey: z.string().optional(),
+  sourceIds: z.array(z.string()).optional(),
 });
 
 export async function POST(
@@ -23,7 +24,11 @@ export async function POST(
 
   const markdown =
     payload.markdown ??
-    (await generateSummary(id, payload.modelKey ?? snapshot.note?.id ?? undefined));
+    (await generateSummary(
+      id,
+      payload.modelKey ?? snapshot.note?.id ?? undefined,
+      payload.sourceIds,
+    ));
 
   upsertNote(id, markdown);
   return NextResponse.json({ markdown });

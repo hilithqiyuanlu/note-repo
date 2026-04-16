@@ -9,7 +9,12 @@ type SearchResult = SegmentRecord & {
   score: number;
 };
 
-export async function hybridSearch(notebookId: string, query: string, limit = 8) {
+export async function hybridSearch(
+  notebookId: string,
+  query: string,
+  limit = 8,
+  sourceIds?: string[],
+) {
   const lexicalMap = new Map<string, number>();
   const sqlite = getSqlite();
   const lexicalRows = sqlite
@@ -28,7 +33,7 @@ export async function hybridSearch(notebookId: string, query: string, limit = 8)
     lexicalMap.set(row.segmentId, Math.max(0, 1 / (1 + Math.abs(row.rank))));
   });
 
-  const segments = listNotebookSegments(notebookId);
+  const segments = listNotebookSegments(notebookId, sourceIds);
   const queryVector = await embedText(query);
   const storedEmbeddings = getSegmentEmbeddings(segments.map((segment) => segment.id));
   const semanticMap = new Map(

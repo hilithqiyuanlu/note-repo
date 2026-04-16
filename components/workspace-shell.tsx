@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
+  Check,
   ChevronLeft,
+  CircleCheck,
+  Download,
   FileText,
   Globe,
   History,
@@ -12,9 +15,9 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   RefreshCcw,
   Save,
-  Download,
   Send,
   Settings2,
   Upload,
@@ -25,7 +28,7 @@ import {
 import { MarkdownPreview } from "@/components/markdown-preview";
 import { SourceViewer } from "@/components/source-viewer";
 import type { AppSettingsRecord, Citation, ModelOption, NotebookSnapshot } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, formatTimestamp } from "@/lib/utils";
 
 type ThreadRecord = {
   id: string;
@@ -89,6 +92,18 @@ function LoadingDots() {
   );
 }
 
+function formatCitationLabel(citation: Citation) {
+  if (citation.kind === "youtube" && citation.timestampStart != null) {
+    return formatTimestamp(citation.timestampStart);
+  }
+
+  if (citation.kind === "pdf" && citation.page != null) {
+    return `第 ${citation.page} 页`;
+  }
+
+  return citation.locator;
+}
+
 export function WorkspaceShell({
   initialSnapshot,
   initialThreads,
@@ -110,10 +125,14 @@ export function WorkspaceShell({
   const [isCompact, setIsCompact] = useState(false);
   const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null);
   const [isEditingSummary, setIsEditingSummary] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(initialSnapshot.notebook.title);
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
+  const [selectedScopeSourceIds, setSelectedScopeSourceIds] = useState<string[]>([]);
   const [sourceType, setSourceType] = useState<"web" | "youtube" | "pdf">("web");
   const [sourceInput, setSourceInput] = useState("");
   const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState(initialSnapshot.sources[0]?.id ?? null);
   const [selectedSource, setSelectedSource] = useState<SourceDetail | null>(null);
   const [markdown, setMarkdown] = useState(initialSnapshot.note?.markdown || "");
@@ -137,6 +156,7 @@ export function WorkspaceShell({
   );
   const chatMessages = activeThread?.messages ?? [];
   const chatModels = models.filter((model) => model.kind === "chat");
+  const sourceScopeIds = selectedScopeSourceIds.length > 0 ? selectedScopeSourceIds : undefined;
 
   useEffect(() => {
     const updateLayout = () => {
@@ -185,6 +205,10 @@ export function WorkspaceShell({
       .catch(() => setModels(initialModels));
   }, [initialModels]);
 
+  useEffect(() => {
+    setTitleDraft(snapshot.notebook.title);
+  }, [snapshot.notebook.title]);
+
   const syncLocalNote = (nextMarkdown: string) => {
     const updatedAt = new Date().toISOString();
     setSnapshot((current) => ({
@@ -209,13 +233,20 @@ export function WorkspaceShell({
 
   const refreshSnapshot = async () => {
     const response = await fetch(`/api/notebooks/${snapshot.notebook.id}`);
-      const payload = (await response.json()) as NotebookSnapshot;
-      setSnapshot(payload);
-      setMarkdown(payload.note?.markdown || "");
-      setFocusTarget(null);
-      if (!selectedSourceId && payload.sources[0]) {
-        setSelectedSourceId(payload.sources[0].id);
-      }
+    if (!response.ok) {
+      return;
+    }
+
+    const payload = (await response.json()) as NotebookSnapshot;
+    setSnapshot(payload);
+    setMarkdown(payload.note?.markdown || "");
+    setFocusTarget(null);
+    setSelectedScopeSourceIds((current) =>
+      current.filter((sourceId) => payload.sources.some((source) => source.id === sourceId)),
+    );
+    if (!selectedSourceId || !payload.sources.some((source) => source.id === selectedSourceId)) {
+      setSelectedSourceId(payload.sources[0]?.id ?? null);
+    }
   };
 
   const openLeftPanel = () => {
@@ -241,27 +272,42 @@ export function WorkspaceShell({
   };
 
   const importSource = () => {
+    setImportError(null);
     setImportLoading(true);
     startTransition(async () => {
       try {
-        const formData = new FormData();
-        formData.set("type", sourceType);
-        formData.set("input", sourceType === "pdf" ? sourceFile?.name || "" : sourceInput);
-        formData.set("notebookId", snapshot.notebook.id);
-        if (sourceFile) {
-          formData.set("file", sourceFile);
-        }
+        let response: Response;
 
-        const response = await fetch("/api/sources/import", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          return;
+        if (sourceType === "pdf") {
+          const formData = new FormData();
+          formData.set("type", sourceType);
+          formData.set("input", sourceFile?.name || "");
+          formData.set("notebookId", snapshot.notebook.id);
+          if (sourceFile) {
+            formData.set("file", sourceFile);
+          }
+          response = await fetch("/api/sources/import", {
+            method: "POST",
+            body: formData,
+          });
+        } else {
+          response = await fetch("/api/sources/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: sourceType,
+              input: sourceInput,
+              notebookId: snapshot.notebook.id,
+            }),
+          });
         }
 
         const payload = await response.json();
+        if (!response.ok) {
+          setImportError(payload.error || "导入失败");
+          return;
+        }
+
         await refreshSnapshot();
         if (payload.sourceId) {
           setSelectedSourceId(payload.sourceId);
@@ -281,7 +327,10 @@ export function WorkspaceShell({
         const response = await fetch(`/api/notebooks/${snapshot.notebook.id}/summary`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ modelKey: selectedModel }),
+          body: JSON.stringify({
+            modelKey: selectedModel,
+            sourceIds: sourceScopeIds,
+          }),
         });
 
         if (!response.ok) {
@@ -315,6 +364,39 @@ export function WorkspaceShell({
       setSaveState("saved");
       window.setTimeout(() => setSaveState("idle"), 1400);
     });
+  };
+
+  const saveTitle = () => {
+    if (!titleDraft.trim()) {
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await fetch(`/api/notebooks/${snapshot.notebook.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: titleDraft.trim() }),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      setSnapshot((current) => ({
+        ...current,
+        notebook: payload.notebook,
+      }));
+      setIsEditingTitle(false);
+    });
+  };
+
+  const toggleSourceScope = (sourceId: string) => {
+    setSelectedScopeSourceIds((current) =>
+      current.includes(sourceId)
+        ? current.filter((item) => item !== sourceId)
+        : [...current, sourceId],
+    );
   };
 
   const startNewChat = () => {
@@ -358,6 +440,7 @@ export function WorkspaceShell({
             message: question,
             useWebSearch,
             modelKey: selectedModel,
+            sourceIds: sourceScopeIds,
           }),
         });
 
@@ -397,6 +480,7 @@ export function WorkspaceShell({
         ...current,
         sources: nextSources,
       }));
+      setSelectedScopeSourceIds((current) => current.filter((id) => id !== deletingId));
       setSelectedSourceId(nextSelectedId);
       setSelectedSource(null);
       setFocusTarget(null);
@@ -405,7 +489,10 @@ export function WorkspaceShell({
   };
 
   const handleCitationClick = (citation: Citation) => {
-    setSelectedSourceId(citation.sourceId);
+    if (selectedSourceId !== citation.sourceId) {
+      setSelectedSourceId(citation.sourceId);
+    }
+
     setFocusTarget({
       sourceId: citation.sourceId,
       segmentId: citation.segmentId ?? null,
@@ -437,6 +524,9 @@ export function WorkspaceShell({
     }
   };
 
+  const sourcePlaceholder =
+    selectedScopeSourceIds.length > 0 ? `${selectedScopeSourceIds.length}个来源` : "全部来源";
+
   const gridTemplateColumns = `${leftCollapsed ? "72px" : "minmax(280px, 360px)"} minmax(0, 1fr) ${
     rightCollapsed ? "72px" : "minmax(320px, 420px)"
   }`;
@@ -453,9 +543,29 @@ export function WorkspaceShell({
               <ChevronLeft className="h-4 w-4" />
               笔记库
             </Link>
-            <div className="truncate text-lg font-semibold text-slate-900">
-              {snapshot.notebook.title}
-            </div>
+            {isEditingTitle ? (
+              <input
+                autoFocus
+                className="min-w-0 rounded-xl border border-line bg-fog px-3 py-2 text-lg font-semibold text-slate-900 outline-none focus:border-accent"
+                onBlur={saveTitle}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    saveTitle();
+                  }
+                }}
+                value={titleDraft}
+              />
+            ) : (
+              <button
+                className="truncate text-left text-lg font-semibold text-slate-900"
+                onDoubleClick={() => setIsEditingTitle(true)}
+                type="button"
+              >
+                {snapshot.notebook.title}
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -503,7 +613,7 @@ export function WorkspaceShell({
 
           <aside
             className={cn(
-              "flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
+              "flex min-h-0 flex-col overflow-visible rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
               isCompact
                 ? "absolute inset-y-0 left-0 z-20 w-[min(88vw,360px)] transition-transform duration-300"
                 : "",
@@ -526,23 +636,49 @@ export function WorkspaceShell({
                 {snapshot.sources.map((source) => {
                   const Icon =
                     source.type === "web" ? Globe : source.type === "youtube" ? Video : FileText;
+                  const inScope = selectedScopeSourceIds.includes(source.id);
                   return (
-                    <button
-                      className={cn(
-                        "inline-flex h-12 w-12 items-center justify-center rounded-2xl border transition",
-                        selectedSourceId === source.id
-                          ? "border-accent bg-accentSoft text-accent"
-                          : "border-line bg-white text-slate-500",
-                      )}
+                    <div
+                      className="relative"
                       key={source.id}
-                      onClick={() => {
-                        setSelectedSourceId(source.id);
-                        setLeftCollapsed(false);
-                      }}
-                      type="button"
+                      onMouseEnter={() => setHoveredSourceId(source.id)}
+                      onMouseLeave={() =>
+                        setHoveredSourceId((current) => (current === source.id ? null : current))
+                      }
                     >
-                      <Icon className="h-5 w-5" />
-                    </button>
+                      <button
+                        className={cn(
+                          "inline-flex h-12 w-12 items-center justify-center rounded-2xl border transition",
+                          selectedSourceId === source.id
+                            ? "border-accent bg-accentSoft text-accent"
+                            : "border-line bg-white text-slate-500",
+                        )}
+                        onClick={() => {
+                          setSelectedSourceId(source.id);
+                          setLeftCollapsed(false);
+                        }}
+                        type="button"
+                      >
+                        <Icon className="h-5 w-5" />
+                      </button>
+                      <button
+                        className={cn(
+                          "absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] transition",
+                          inScope
+                            ? "border-accent bg-accent text-white"
+                            : "border-line bg-white text-slate-400",
+                        )}
+                        onClick={() => toggleSourceScope(source.id)}
+                        type="button"
+                      >
+                        <Check className="h-3 w-3" />
+                      </button>
+                      {hoveredSourceId === source.id ? (
+                        <div className="pointer-events-none absolute left-[56px] top-1/2 z-10 -translate-y-1/2 whitespace-nowrap rounded-full border border-line bg-white px-3 py-1 text-xs text-slate-600 shadow-sm">
+                          {source.title}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
@@ -572,33 +708,41 @@ export function WorkspaceShell({
                     ))}
                   </div>
 
-                  {sourceType === "pdf" ? (
-                    <input
-                      accept="application/pdf"
-                      className="w-full rounded-2xl border border-line bg-fog px-4 py-3 text-sm"
-                      onChange={(event) => setSourceFile(event.target.files?.[0] || null)}
-                      type="file"
-                    />
-                  ) : (
-                    <input
-                      className="w-full rounded-2xl border border-line bg-fog px-4 py-3 text-sm outline-none focus:border-accent"
-                      onChange={(event) => setSourceInput(event.target.value)}
-                      placeholder={sourceType === "web" ? "网页 URL" : "YouTube URL"}
-                      value={sourceInput}
-                    />
-                  )}
+                  <div className="flex gap-3">
+                    {sourceType === "pdf" ? (
+                      <label className="flex flex-1 items-center rounded-2xl border border-line bg-fog px-4 py-3 text-sm text-slate-600">
+                        <input
+                          accept="application/pdf"
+                          className="hidden"
+                          onChange={(event) => setSourceFile(event.target.files?.[0] || null)}
+                          type="file"
+                        />
+                        <span className="truncate">{sourceFile?.name || "选择文件"}</span>
+                      </label>
+                    ) : (
+                      <input
+                        className="min-w-0 flex-1 rounded-2xl border border-line bg-fog px-4 py-3 text-sm outline-none focus:border-accent"
+                        onChange={(event) => setSourceInput(event.target.value)}
+                        placeholder={sourceType === "web" ? "网页 URL" : "YouTube URL"}
+                        value={sourceInput}
+                      />
+                    )}
 
-                  <button
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-accent disabled:opacity-50"
-                    disabled={
-                      importLoading || isPending || (sourceType === "pdf" ? !sourceFile : !sourceInput.trim())
-                    }
-                    onClick={importSource}
-                    type="button"
-                  >
-                    <Upload className="h-4 w-4" />
-                    {importLoading ? "导入中..." : "导入"}
-                  </button>
+                    <button
+                      className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition hover:bg-accent disabled:opacity-50"
+                      disabled={
+                        importLoading || isPending || (sourceType === "pdf" ? !sourceFile : !sourceInput.trim())
+                      }
+                      onClick={importSource}
+                      type="button"
+                    >
+                      <Upload className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {importError ? (
+                    <div className="text-xs text-red-500">{importError}</div>
+                  ) : null}
                 </div>
 
                 <div className="grid min-h-0 flex-1 grid-cols-[64px_minmax(0,1fr)]">
@@ -607,6 +751,7 @@ export function WorkspaceShell({
                       {snapshot.sources.map((source) => {
                         const Icon =
                           source.type === "web" ? Globe : source.type === "youtube" ? Video : FileText;
+                        const inScope = selectedScopeSourceIds.includes(source.id);
                         return (
                           <div
                             className="relative"
@@ -631,6 +776,18 @@ export function WorkspaceShell({
                             >
                               <Icon className="h-5 w-5" />
                             </button>
+                            <button
+                              className={cn(
+                                "absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] transition",
+                                inScope
+                                  ? "border-accent bg-accent text-white"
+                                  : "border-line bg-white text-slate-400",
+                              )}
+                              onClick={() => toggleSourceScope(source.id)}
+                              type="button"
+                            >
+                              <Check className="h-3 w-3" />
+                            </button>
                             {hoveredSourceId === source.id ? (
                               <div className="pointer-events-none absolute left-[52px] top-1/2 z-10 -translate-y-1/2 whitespace-nowrap rounded-full border border-line bg-white px-3 py-1 text-xs text-slate-600 shadow-sm">
                                 {source.title}
@@ -641,10 +798,14 @@ export function WorkspaceShell({
                       })}
                     </div>
                   </div>
-                  <div className="min-h-0 overflow-hidden p-3">
+                  <div className="min-h-0 overflow-visible p-3">
                     <SourceViewer
                       focusTarget={focusTarget}
+                      inScope={selectedSourceId ? selectedScopeSourceIds.includes(selectedSourceId) : false}
                       onDelete={deleteCurrentSource}
+                      onToggleScope={
+                        selectedSourceId ? () => toggleSourceScope(selectedSourceId) : undefined
+                      }
                       source={selectedSource}
                     />
                   </div>
@@ -666,7 +827,7 @@ export function WorkspaceShell({
                   <span className="text-sm text-accent">已保存</span>
                 ) : null}
                 <button
-                  className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-2xl bg-accent px-3 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
                   disabled={summaryLoading}
                   onClick={regenerateSummary}
                   type="button"
@@ -674,36 +835,25 @@ export function WorkspaceShell({
                   <RefreshCcw className={cn("h-4 w-4", summaryLoading && "animate-spin")} />
                   {summaryLoading ? <LoadingDots /> : "生成"}
                 </button>
-                {isEditingSummary ? (
+                <button
+                  className="inline-flex items-center rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
+                  onClick={() => setIsEditingSummary((value) => !value)}
+                  type="button"
+                >
+                  {isEditingSummary ? "预览" : "编辑"}
+                </button>
+                {!isEditingSummary ? (
                   <button
-                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent"
-                    onClick={saveSummary}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
+                    onClick={() => {
+                      void exportMarkdown();
+                    }}
                     type="button"
                   >
-                    <Save className="h-4 w-4" />
-                    保存
+                    <Download className="h-4 w-4" />
+                    导出
                   </button>
-                ) : (
-                  <>
-                    <button
-                      className="inline-flex items-center rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
-                      onClick={() => setIsEditingSummary(true)}
-                      type="button"
-                    >
-                      编辑
-                    </button>
-                    <button
-                      className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-accent"
-                      onClick={() => {
-                        void exportMarkdown();
-                      }}
-                      type="button"
-                    >
-                      <Download className="h-4 w-4" />
-                      导出
-                    </button>
-                  </>
-                )}
+                ) : null}
               </div>
             </div>
 
@@ -813,9 +963,13 @@ export function WorkspaceShell({
                         )}
                         key={message.id}
                       >
-                        <div className="whitespace-pre-wrap text-sm leading-7 text-slate-700">
-                          {message.content}
-                        </div>
+                        {message.role === "assistant" ? (
+                          <MarkdownPreview content={message.content} />
+                        ) : (
+                          <div className="whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                            {message.content}
+                          </div>
+                        )}
                         {message.citations.length ? (
                           <div className="mt-4 grid gap-2">
                             {message.citations.map((citation, index) => (
@@ -826,7 +980,7 @@ export function WorkspaceShell({
                                 type="button"
                               >
                                 <div className="mb-1 font-medium text-slate-700">
-                                  {citation.sourceTitle} · {citation.locator}
+                                  {citation.sourceTitle} · {formatCitationLabel(citation)}
                                 </div>
                                 <div>{citation.quotedText}</div>
                               </button>
@@ -835,11 +989,7 @@ export function WorkspaceShell({
                         ) : null}
                       </div>
                     ))
-                  ) : (
-                    <div className="rounded-[24px] border border-dashed border-line bg-white/70 p-8 text-sm leading-7 text-slate-600">
-                      输入问题开始对话。
-                    </div>
-                  )}
+                  ) : null}
                   {chatLoading ? (
                     <div className="rounded-[24px] border border-line bg-white px-4 py-4 text-sm text-slate-500">
                       思考中...
@@ -850,7 +1000,7 @@ export function WorkspaceShell({
                 <div className="shrink-0 border-t border-line/70 p-4">
                   <div className="rounded-[24px] border border-line bg-white p-3">
                     <textarea
-                      className="h-20 w-full resize-none px-2 py-2 text-sm leading-7 outline-none"
+                      className="h-16 w-full resize-none px-2 py-2 text-sm leading-7 outline-none"
                       onChange={(event) => setQuestion(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -858,7 +1008,7 @@ export function WorkspaceShell({
                           sendMessage();
                         }
                       }}
-                      placeholder="输入你的问题..."
+                      placeholder={sourcePlaceholder}
                       value={question}
                     />
                     <div className="flex items-center justify-between gap-3">

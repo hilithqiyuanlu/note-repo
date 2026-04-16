@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { getSettings, listNotebookSegments } from "@/lib/db/queries";
 import { localAnswer, localSummary } from "@/lib/ai/local";
 import { hybridSearch } from "@/lib/search";
+import { formatTimestamp } from "@/lib/utils";
 import type { Citation, ModelOption } from "@/lib/types";
 
 type JsonAnswer = {
@@ -84,8 +85,12 @@ export async function listModels(): Promise<ModelOption[]> {
   }
 }
 
-export async function generateSummary(notebookId: string, modelKey?: string) {
-  const snapshot = listNotebookSegments(notebookId);
+export async function generateSummary(
+  notebookId: string,
+  modelKey?: string,
+  sourceIds?: string[],
+) {
+  const snapshot = listNotebookSegments(notebookId, sourceIds);
   const notebookTitle = notebookId;
   const settings = getSettings();
 
@@ -168,8 +173,9 @@ export async function chatWithNotebook(params: {
   message: string;
   useWebSearch: boolean;
   modelKey?: string;
+  sourceIds?: string[];
 }) {
-  const results = await hybridSearch(params.notebookId, params.message, 8);
+  const results = await hybridSearch(params.notebookId, params.message, 8, params.sourceIds);
   const settings = getSettings();
 
   if (
@@ -215,7 +221,7 @@ ${results
       item.sourceType === "pdf"
         ? `第 ${item.page ?? 1} 页`
         : item.sourceType === "youtube"
-          ? `时间 ${item.timestampStart ?? 0}s`
+          ? formatTimestamp(item.timestampStart)
           : `段落 ${item.order + 1}`;
 
     return `sourceId=${item.sourceId} | segmentId=${item.id} | title=${item.sourceTitle} | locator=${locator} | content=${item.content}`;

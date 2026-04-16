@@ -413,11 +413,9 @@ export function getSourceDetail(sourceId: string) {
   };
 }
 
-export function listNotebookSegments(notebookId: string): SegmentRecord[] {
+export function listNotebookSegments(notebookId: string, sourceIds?: string[]): SegmentRecord[] {
   const sqlite = getSqlite();
-  const rows = sqlite
-    .prepare(
-      `
+  const baseQuery = `
       SELECT
         seg.id,
         seg.source_id AS sourceId,
@@ -432,10 +430,12 @@ export function listNotebookSegments(notebookId: string): SegmentRecord[] {
       FROM source_segments seg
       INNER JOIN sources src ON src.id = seg.source_id
       WHERE src.notebook_id = ?
+      ${sourceIds?.length ? `AND seg.source_id IN (${sourceIds.map(() => "?").join(",")})` : ""}
       ORDER BY src.created_at ASC, seg.segment_order ASC
-    `,
-    )
-    .all(notebookId) as Array<{
+    `;
+  const rows = sqlite
+    .prepare(baseQuery)
+    .all(notebookId, ...(sourceIds ?? [])) as Array<{
       id: string;
       sourceId: string;
       notebookId: string;
