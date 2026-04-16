@@ -5,21 +5,25 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   Check,
   ChevronLeft,
-  CircleCheck,
+  CircleAlert,
   Download,
+  Eye,
+  ExternalLink,
   FileText,
   Globe,
   History,
+  LoaderCircle,
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Pencil,
   RefreshCcw,
   Save,
   Send,
   Settings2,
+  SquarePen,
+  Trash2,
   Upload,
   Video,
   Wifi,
@@ -27,49 +31,16 @@ import {
 
 import { MarkdownPreview } from "@/components/markdown-preview";
 import { SourceViewer } from "@/components/source-viewer";
-import type { AppSettingsRecord, Citation, ModelOption, NotebookSnapshot } from "@/lib/types";
+import type {
+  AppSettingsRecord,
+  Citation,
+  ModelCatalog,
+  NotebookSnapshot,
+  SourceDetail,
+  ThreadMessage,
+  ThreadSummary,
+} from "@/lib/types";
 import { cn, formatTimestamp } from "@/lib/utils";
-
-type ThreadRecord = {
-  id: string;
-  title: string;
-  modelKey: string | null;
-  createdAt: string;
-  updatedAt: string;
-  messages: Array<{
-    id: string;
-    role: "user" | "assistant";
-    content: string;
-    citations: Citation[];
-    usedWebSearch: boolean;
-    createdAt: string;
-  }>;
-};
-
-type SourceDetail = {
-  id: string;
-  notebookId: string;
-  type: "web" | "youtube" | "pdf";
-  title: string;
-  input: string;
-  url: string | null;
-  status: string;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-  segments: Array<{
-    id: string;
-    content: string;
-    page: number | null;
-    timestampStart: number | null;
-    timestampEnd: number | null;
-  }>;
-  assets: Array<{
-    id: string;
-    kind: string;
-    filePath: string;
-  }>;
-};
 
 type FocusTarget = {
   sourceId: string;
@@ -79,10 +50,21 @@ type FocusTarget = {
   nonce: string;
 };
 
-function LoadingDots() {
+type LeftMode = "collapsed" | "list" | "viewer";
+
+const MODEL_CATALOG_CACHE_TTL = 60_000;
+
+let modelCatalogCache:
+  | {
+      fetchedAt: number;
+      catalog: ModelCatalog;
+    }
+  | null = null;
+
+function LoadingDots({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center gap-1">
-      <span>生成中</span>
+    <span className="inline-flex items-center gap-1.5">
+      <span>{label}</span>
       <span className="inline-flex gap-1">
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
@@ -92,9 +74,29 @@ function LoadingDots() {
   );
 }
 
+function sourceIcon(type: NotebookSnapshot["sources"][number]["type"]) {
+  return type === "web" ? Globe : type === "youtube" ? Video : FileText;
+}
+
+function sortSources<T extends { title: string }>(sources: T[]) {
+  return [...sources].sort((left, right) =>
+    left.title.localeCompare(right.title, "zh-CN", {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+}
+
 function formatCitationLabel(citation: Citation) {
+  const normalizedTimestamp =
+    citation.timestampStart != null &&
+    citation.timestampEnd != null &&
+    citation.timestampEnd - citation.timestampStart > 120
+      ? citation.timestampStart / 1000
+      : citation.timestampStart;
+
   if (citation.kind === "youtube" && citation.timestampStart != null) {
-    return formatTimestamp(citation.timestampStart);
+    return formatTimestamp(normalizedTimestamp);
   }
 
   if (citation.kind === "pdf" && citation.page != null) {
@@ -104,26 +106,147 @@ function formatCitationLabel(citation: Citation) {
   return citation.locator;
 }
 
+function SourceRow({
+  source,
+  selected,
+  inScope,
+  loading,
+  editing,
+  editingTitle,
+  onSelect,
+  onToggleScope,
+  onView,
+  onDelete,
+  onStartEdit,
+  onEditChange,
+  onEditCancel,
+  onEditCommit,
+}: {
+  source: NotebookSnapshot["sources"][number];
+  selected: boolean;
+  inScope: boolean;
+  loading: boolean;
+  editing: boolean;
+  editingTitle: string;
+  onSelect: () => void;
+  onToggleScope: () => void;
+  onView: () => void;
+  onDelete: () => void;
+  onStartEdit: () => void;
+  onEditChange: (value: string) => void;
+  onEditCancel: () => void;
+  onEditCommit: () => void;
+}) {
+  const Icon = sourceIcon(source.type);
+
+  return (
+    <div
+      className={cn(
+        "group flex items-center gap-3 rounded-[20px] border px-3 py-3 transition duration-300",
+        selected
+          ? "border-accent bg-accentSoft/60 shadow-sm"
+          : "border-line/70 bg-white hover:border-accent/35 hover:bg-fog/70",
+      )}
+    >
+      <button
+        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-line bg-fog text-slate-600 transition hover:border-accent hover:text-accent"
+        onClick={onSelect}
+        type="button"
+      >
+        <Icon className="h-4.5 w-4.5" />
+      </button>
+
+      <button
+        className={cn(
+          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition",
+          inScope
+            ? "border-accent bg-accent text-white"
+            : "border-line bg-white text-transparent hover:border-accent/50",
+        )}
+        onClick={onToggleScope}
+        type="button"
+      >
+        <Check className="h-3.5 w-3.5" />
+      </button>
+
+      <div className="min-w-0 flex-1">
+        {editing ? (
+          <input
+            autoFocus
+            className="w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-accent"
+            onBlur={onEditCommit}
+            onChange={(event) => onEditChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onEditCommit();
+              }
+
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onEditCancel();
+              }
+            }}
+            value={editingTitle}
+          />
+        ) : (
+          <button
+            className="block w-full truncate text-left text-sm font-medium text-slate-800"
+            onClick={onSelect}
+            onDoubleClick={onStartEdit}
+            title={source.title}
+            type="button"
+          >
+            {source.title}
+          </button>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-white text-slate-500 transition hover:border-accent hover:text-accent"
+          onClick={onView}
+          title="查看"
+          type="button"
+        >
+          <Eye className="h-4 w-4" />
+        </button>
+        <button
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-white text-slate-500 transition hover:border-red-300 hover:text-red-500"
+          onClick={onDelete}
+          title="删除"
+          type="button"
+        >
+          {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceShell({
   initialSnapshot,
-  initialThreads,
-  initialModels,
+  initialThreadSummaries,
+  initialActiveThreadId,
+  initialActiveThreadMessages,
+  initialModelCatalog,
   initialSettings,
 }: {
   initialSnapshot: NotebookSnapshot;
-  initialThreads: ThreadRecord[];
-  initialModels: ModelOption[];
+  initialThreadSummaries: ThreadSummary[];
+  initialActiveThreadId: string | null;
+  initialActiveThreadMessages: ThreadMessage[];
+  initialModelCatalog: ModelCatalog;
   initialSettings: AppSettingsRecord;
 }) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
-  const [threads, setThreads] = useState(initialThreads);
-  const [models, setModels] = useState(initialModels);
+  const [threadSummaries, setThreadSummaries] = useState(initialThreadSummaries);
+  const [modelCatalog, setModelCatalog] = useState(initialModelCatalog);
   const [settingsState, setSettingsState] = useState(initialSettings);
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [leftMode, setLeftMode] = useState<LeftMode>("list");
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
-  const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null);
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(initialSnapshot.notebook.title);
@@ -132,31 +255,47 @@ export function WorkspaceShell({
   const [sourceType, setSourceType] = useState<"web" | "youtube" | "pdf">("web");
   const [sourceInput, setSourceInput] = useState("");
   const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [selectedSourceId, setSelectedSourceId] = useState(
+    initialSnapshot.initialSourceDetail?.id ?? initialSnapshot.sources[0]?.id ?? null,
+  );
+  const [sourceDetails, setSourceDetails] = useState<Record<string, SourceDetail>>(() =>
+    initialSnapshot.initialSourceDetail
+      ? { [initialSnapshot.initialSourceDetail.id]: initialSnapshot.initialSourceDetail }
+      : {},
+  );
+  const [sourceDetailLoadingId, setSourceDetailLoadingId] = useState<string | null>(null);
+  const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
+  const [editingSourceTitle, setEditingSourceTitle] = useState("");
+  const [sourceActionError, setSourceActionError] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
-  const [selectedSourceId, setSelectedSourceId] = useState(initialSnapshot.sources[0]?.id ?? null);
-  const [selectedSource, setSelectedSource] = useState<SourceDetail | null>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(initialActiveThreadId);
+  const [messagesByThreadId, setMessagesByThreadId] = useState<Record<string, ThreadMessage[]>>(
+    () =>
+      initialActiveThreadId
+        ? {
+            [initialActiveThreadId]: initialActiveThreadMessages,
+          }
+        : {},
+  );
   const [markdown, setMarkdown] = useState(initialSnapshot.note?.markdown || "");
   const [question, setQuestion] = useState("");
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    initialThreads[0]?.id ?? null,
-  );
-  const [selectedModel, setSelectedModel] = useState(
-    initialSettings.chatModel || "gemini-2.5-pro",
-  );
+  const [selectedModel, setSelectedModel] = useState(initialSettings.chatModel || "gemini-2.5-pro");
   const [useWebSearch, setUseWebSearch] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
+  const [rowLoadingId, setRowLoadingId] = useState<string | null>(null);
+  const [reprocessLoading, setReprocessLoading] = useState(false);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [threadLoadingId, setThreadLoadingId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saved">("idle");
   const [isPending, startTransition] = useTransition();
 
-  const activeThread = useMemo(
-    () => threads.find((thread) => thread.id === activeThreadId) ?? null,
-    [activeThreadId, threads],
-  );
-  const chatMessages = activeThread?.messages ?? [];
-  const chatModels = models.filter((model) => model.kind === "chat");
+  const sortedSources = useMemo(() => sortSources(snapshot.sources), [snapshot.sources]);
+  const chatMessages = activeThreadId ? messagesByThreadId[activeThreadId] ?? [] : [];
+  const chatModels = modelCatalog.models.filter((model) => model.kind === "chat");
   const sourceScopeIds = selectedScopeSourceIds.length > 0 ? selectedScopeSourceIds : undefined;
+  const selectedSource = selectedSourceId ? sourceDetails[selectedSourceId] ?? null : null;
 
   useEffect(() => {
     const updateLayout = () => {
@@ -164,11 +303,11 @@ export function WorkspaceShell({
       setIsCompact(compact);
 
       if (compact) {
-        setLeftCollapsed(true);
+        setLeftMode("collapsed");
         setRightCollapsed(true);
         setHistoryOpen(false);
       } else {
-        setLeftCollapsed(false);
+        setLeftMode((current) => (current === "collapsed" ? "list" : current));
         setRightCollapsed(false);
       }
     };
@@ -179,35 +318,61 @@ export function WorkspaceShell({
   }, []);
 
   useEffect(() => {
-    if (!selectedSourceId) {
-      setSelectedSource(null);
+    setTitleDraft(snapshot.notebook.title);
+  }, [snapshot.notebook.title]);
+
+  useEffect(() => {
+    if (
+      modelCatalogCache &&
+      Date.now() - modelCatalogCache.fetchedAt < MODEL_CATALOG_CACHE_TTL
+    ) {
+      setModelCatalog(modelCatalogCache.catalog);
+      return;
+    }
+
+    void refreshModels(true);
+  }, []);
+
+  useEffect(() => {
+    if (leftMode !== "viewer" || !selectedSourceId || sourceDetails[selectedSourceId]) {
       return;
     }
 
     let ignore = false;
+    setSourceDetailLoadingId(selectedSourceId);
     fetch(`/api/sources/${selectedSourceId}`)
       .then((response) => response.json())
       .then((payload) => {
+        if (!ignore && payload?.id) {
+          setSourceDetails((current) => ({ ...current, [payload.id]: payload }));
+        }
+      })
+      .finally(() => {
         if (!ignore) {
-          setSelectedSource(payload);
+          setSourceDetailLoadingId((current) => (current === selectedSourceId ? null : current));
         }
       });
 
     return () => {
       ignore = true;
     };
-  }, [selectedSourceId]);
+  }, [leftMode, selectedSourceId, sourceDetails]);
 
   useEffect(() => {
-    fetch("/api/models")
-      .then((response) => response.json())
-      .then((payload) => setModels(payload.models ?? initialModels))
-      .catch(() => setModels(initialModels));
-  }, [initialModels]);
+    if (selectedSourceId && snapshot.sources.some((source) => source.id === selectedSourceId)) {
+      return;
+    }
+
+    setSelectedSourceId(sortedSources[0]?.id ?? null);
+  }, [selectedSourceId, snapshot.sources, sortedSources]);
 
   useEffect(() => {
-    setTitleDraft(snapshot.notebook.title);
-  }, [snapshot.notebook.title]);
+    if (!activeThreadId || messagesByThreadId[activeThreadId]) {
+      return;
+    }
+
+    void loadThreadMessages(activeThreadId);
+  }, [activeThreadId, messagesByThreadId]);
 
   const syncLocalNote = (nextMarkdown: string) => {
     const updatedAt = new Date().toISOString();
@@ -231,41 +396,61 @@ export function WorkspaceShell({
     }));
   };
 
-  const refreshSnapshot = async () => {
+  const mergeSourceDetail = (detail: SourceDetail | null) => {
+    if (!detail) {
+      return;
+    }
+
+    setSourceDetails((current) => ({ ...current, [detail.id]: detail }));
+  };
+
+  const refreshSnapshot = async (preferredSourceId?: string | null) => {
     const response = await fetch(`/api/notebooks/${snapshot.notebook.id}`);
     if (!response.ok) {
-      return;
+      return null;
     }
 
     const payload = (await response.json()) as NotebookSnapshot;
     setSnapshot(payload);
     setMarkdown(payload.note?.markdown || "");
-    setFocusTarget(null);
+    mergeSourceDetail(payload.initialSourceDetail);
     setSelectedScopeSourceIds((current) =>
       current.filter((sourceId) => payload.sources.some((source) => source.id === sourceId)),
     );
-    if (!selectedSourceId || !payload.sources.some((source) => source.id === selectedSourceId)) {
-      setSelectedSourceId(payload.sources[0]?.id ?? null);
-    }
+
+    const nextSelectedId =
+      preferredSourceId && payload.sources.some((source) => source.id === preferredSourceId)
+        ? preferredSourceId
+        : payload.sources[0]?.id ?? null;
+    setSelectedSourceId(nextSelectedId);
+    return payload;
   };
 
-  const openLeftPanel = () => {
+  const openListPanel = () => {
     if (isCompact) {
       setRightCollapsed(true);
     }
-    setLeftCollapsed(false);
+    setLeftMode("list");
+  };
+
+  const openViewer = (sourceId: string) => {
+    setSelectedSourceId(sourceId);
+    setLeftMode("viewer");
+    if (isCompact) {
+      setRightCollapsed(true);
+    }
   };
 
   const openRightPanel = () => {
     if (isCompact) {
-      setLeftCollapsed(true);
+      setLeftMode("collapsed");
     }
     setRightCollapsed(false);
   };
 
   const closeCompactPanels = () => {
     if (isCompact) {
-      setLeftCollapsed(true);
+      setLeftMode("collapsed");
       setRightCollapsed(true);
       setHistoryOpen(false);
     }
@@ -273,6 +458,7 @@ export function WorkspaceShell({
 
   const importSource = () => {
     setImportError(null);
+    setSourceActionError(null);
     setImportLoading(true);
     startTransition(async () => {
       try {
@@ -308,9 +494,10 @@ export function WorkspaceShell({
           return;
         }
 
-        await refreshSnapshot();
+        await refreshSnapshot(payload.sourceId ?? null);
         if (payload.sourceId) {
           setSelectedSourceId(payload.sourceId);
+          openListPanel();
         }
         setSourceInput("");
         setSourceFile(null);
@@ -352,7 +539,7 @@ export function WorkspaceShell({
       const response = await fetch(`/api/notebooks/${snapshot.notebook.id}/summary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markdown, modelKey: selectedModel }),
+        body: JSON.stringify({ markdown, modelKey: selectedModel, sourceIds: sourceScopeIds }),
       });
 
       if (!response.ok) {
@@ -391,6 +578,38 @@ export function WorkspaceShell({
     });
   };
 
+  const saveSourceTitle = (sourceId: string) => {
+    const nextTitle = editingSourceTitle.trim();
+    if (!nextTitle) {
+      setEditingSourceId(null);
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await fetch(`/api/sources/${sourceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: nextTitle }),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      setSnapshot((current) => ({
+        ...current,
+        sources: current.sources.map((source) =>
+          source.id === sourceId ? { ...source, title: nextTitle, updatedAt: new Date().toISOString() } : source,
+        ),
+      }));
+      if (payload.source?.id) {
+        mergeSourceDetail(payload.source);
+      }
+      setEditingSourceId(null);
+    });
+  };
+
   const toggleSourceScope = (sourceId: string) => {
     setSelectedScopeSourceIds((current) =>
       current.includes(sourceId)
@@ -424,6 +643,49 @@ export function WorkspaceShell({
       .catch(() => undefined);
   };
 
+  const refreshModels = async (silent = false) => {
+    if (!silent) {
+      setModelLoading(true);
+    }
+
+    return fetch("/api/models")
+      .then((response) => response.json())
+      .then((payload) => {
+        setModelCatalog(payload);
+        modelCatalogCache = {
+          fetchedAt: Date.now(),
+          catalog: payload,
+        };
+      })
+      .finally(() => {
+        if (!silent) {
+          setModelLoading(false);
+        }
+      });
+  };
+
+  const loadThreadMessages = async (threadId: string, force = false) => {
+    if (!force && messagesByThreadId[threadId]) {
+      return messagesByThreadId[threadId];
+    }
+
+    setThreadLoadingId(threadId);
+    return fetch(`/api/notebooks/${snapshot.notebook.id}/threads/${threadId}`)
+      .then((response) => response.json())
+      .then((payload) => {
+        if (payload?.messages) {
+          setMessagesByThreadId((current) => ({
+            ...current,
+            [threadId]: payload.messages,
+          }));
+          return payload.messages as ThreadMessage[];
+        }
+
+        return [];
+      })
+      .finally(() => setThreadLoadingId((current) => (current === threadId ? null : current)));
+  };
+
   const sendMessage = () => {
     if (!question.trim()) {
       return;
@@ -436,7 +698,7 @@ export function WorkspaceShell({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            threadId: activeThread?.id,
+            threadId: activeThreadId ?? undefined,
             message: question,
             useWebSearch,
             modelKey: selectedModel,
@@ -449,7 +711,11 @@ export function WorkspaceShell({
         }
 
         const payload = await response.json();
-        setThreads(payload.threads);
+        setThreadSummaries(payload.threadSummaries);
+        setMessagesByThreadId((current) => ({
+          ...current,
+          [payload.threadId]: payload.activeThreadMessages ?? [],
+        }));
         setActiveThreadId(payload.threadId);
         setHistoryOpen(false);
         setQuestion("");
@@ -459,40 +725,42 @@ export function WorkspaceShell({
     });
   };
 
-  const deleteCurrentSource = () => {
-    if (!selectedSourceId) {
-      return;
-    }
-
+  const deleteSource = (sourceId: string) => {
+    setRowLoadingId(sourceId);
     startTransition(async () => {
-      const deletingId = selectedSourceId;
-      const response = await fetch(`/api/sources/${deletingId}`, {
-        method: "DELETE",
-      });
+      try {
+        const response = await fetch(`/api/sources/${sourceId}`, {
+          method: "DELETE",
+        });
 
-      if (!response.ok) {
-        return;
+        if (!response.ok) {
+          return;
+        }
+
+        setSnapshot((current) => ({
+          ...current,
+          sources: current.sources.filter((source) => source.id !== sourceId),
+        }));
+        setSourceDetails((current) => {
+          const next = { ...current };
+          delete next[sourceId];
+          return next;
+        });
+        setSelectedScopeSourceIds((current) => current.filter((id) => id !== sourceId));
+
+        if (selectedSourceId === sourceId) {
+          const remaining = sortedSources.filter((source) => source.id !== sourceId);
+          setSelectedSourceId(remaining[0]?.id ?? null);
+          setLeftMode(remaining.length ? "list" : "collapsed");
+        }
+      } finally {
+        setRowLoadingId(null);
       }
-
-      const nextSources = snapshot.sources.filter((source) => source.id !== deletingId);
-      const nextSelectedId = nextSources[0]?.id ?? null;
-      setSnapshot((current) => ({
-        ...current,
-        sources: nextSources,
-      }));
-      setSelectedScopeSourceIds((current) => current.filter((id) => id !== deletingId));
-      setSelectedSourceId(nextSelectedId);
-      setSelectedSource(null);
-      setFocusTarget(null);
-      setHoveredSourceId((current) => (current === deletingId ? null : current));
     });
   };
 
   const handleCitationClick = (citation: Citation) => {
-    if (selectedSourceId !== citation.sourceId) {
-      setSelectedSourceId(citation.sourceId);
-    }
-
+    setSelectedSourceId(citation.sourceId);
     setFocusTarget({
       sourceId: citation.sourceId,
       segmentId: citation.segmentId ?? null,
@@ -500,14 +768,45 @@ export function WorkspaceShell({
       timestampStart: citation.timestampStart ?? null,
       nonce: `${citation.sourceId}-${citation.segmentId ?? "none"}-${Date.now()}`,
     });
-    openLeftPanel();
+    openViewer(citation.sourceId);
+  };
+
+  const reprocessSource = (transcriptText?: string) => {
+    if (!selectedSourceId) {
+      return;
+    }
+
+    setSourceActionError(null);
+    setReprocessLoading(true);
+    startTransition(async () => {
+      try {
+        const response = await fetch(`/api/sources/${selectedSourceId}/reprocess`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(transcriptText ? { transcriptText } : {}),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          setSourceActionError(payload.error || "刷新来源失败");
+          return;
+        }
+
+        if (payload.source?.id) {
+          mergeSourceDetail(payload.source);
+        }
+        await refreshSnapshot(selectedSourceId);
+      } finally {
+        setReprocessLoading(false);
+      }
+    });
   };
 
   const exportMarkdown = async () => {
     const response = await fetch(`/api/notebooks/${snapshot.notebook.id}/summary`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ markdown, modelKey: selectedModel }),
+      body: JSON.stringify({ markdown, modelKey: selectedModel, sourceIds: sourceScopeIds }),
     });
 
     if (response.ok) {
@@ -525,11 +824,16 @@ export function WorkspaceShell({
   };
 
   const sourcePlaceholder =
-    selectedScopeSourceIds.length > 0 ? `${selectedScopeSourceIds.length}个来源` : "全部来源";
+    selectedScopeSourceIds.length > 0 ? `当前选中 ${selectedScopeSourceIds.length} 个来源` : "全部来源";
 
-  const gridTemplateColumns = `${leftCollapsed ? "72px" : "minmax(280px, 360px)"} minmax(0, 1fr) ${
-    rightCollapsed ? "72px" : "minmax(320px, 420px)"
-  }`;
+  const leftColumn =
+    leftMode === "collapsed"
+      ? "72px"
+      : leftMode === "viewer"
+        ? "minmax(540px, 700px)"
+        : "minmax(340px, 430px)";
+  const rightColumn = rightCollapsed ? "72px" : "minmax(320px, 420px)";
+  const gridTemplateColumns = `${leftColumn} minmax(0, 1fr) ${rightColumn}`;
 
   return (
     <main className="flex h-screen overflow-hidden bg-fog px-4 py-4">
@@ -541,7 +845,7 @@ export function WorkspaceShell({
               href="/"
             >
               <ChevronLeft className="h-4 w-4" />
-              笔记库
+              豆脑
             </Link>
             {isEditingTitle ? (
               <input
@@ -572,10 +876,10 @@ export function WorkspaceShell({
             <div className="flex items-center gap-2 xl:hidden">
               <button
                 className="rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700"
-                onClick={openLeftPanel}
+                onClick={openListPanel}
                 type="button"
               >
-                资料
+                来源
               </button>
               <button
                 className="rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700"
@@ -587,7 +891,7 @@ export function WorkspaceShell({
             </div>
             <Link
               className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-accent hover:text-accent"
-              href="/settings"
+              href={`/settings?back=/notebooks/${snapshot.notebook.id}`}
             >
               <Settings2 className="h-4 w-4" />
               设置
@@ -598,11 +902,13 @@ export function WorkspaceShell({
         <section
           className={cn(
             "min-h-0 flex-1",
-            isCompact ? "relative overflow-hidden" : "grid gap-4 transition-[grid-template-columns] duration-300",
+            isCompact
+              ? "relative overflow-hidden"
+              : "motion-grid grid gap-4",
           )}
           style={isCompact ? undefined : { gridTemplateColumns }}
         >
-          {isCompact && (!leftCollapsed || !rightCollapsed) ? (
+          {isCompact && (leftMode !== "collapsed" || !rightCollapsed) ? (
             <button
               aria-label="关闭侧栏"
               className="absolute inset-0 z-10 bg-slate-900/20"
@@ -613,84 +919,127 @@ export function WorkspaceShell({
 
           <aside
             className={cn(
-              "flex min-h-0 flex-col overflow-visible rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
+              "motion-panel flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
               isCompact
-                ? "absolute inset-y-0 left-0 z-20 w-[min(88vw,360px)] transition-transform duration-300"
+                ? leftMode === "viewer"
+                  ? "absolute inset-y-0 left-0 z-20 w-[min(96vw,720px)]"
+                  : "absolute inset-y-0 left-0 z-20 w-[min(92vw,430px)]"
                 : "",
-              isCompact && leftCollapsed ? "-translate-x-[110%]" : "translate-x-0",
+              isCompact && leftMode === "collapsed" ? "-translate-x-[110%]" : "translate-x-0",
             )}
           >
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-line/70 px-4">
-              {!leftCollapsed || isCompact ? <div className="font-semibold text-slate-900">输入源</div> : null}
+              {leftMode === "viewer" ? (
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <button
+                    className="motion-button inline-flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-white text-slate-500 hover:border-accent hover:text-accent"
+                    onClick={openListPanel}
+                    type="button"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <div
+                    className={cn(
+                      "title-marquee group min-w-0 flex-1 overflow-hidden font-semibold text-slate-900",
+                      (selectedSource?.title?.length ?? 0) > 28 && "is-overflowing",
+                    )}
+                    title={selectedSource?.title || "来源查看"}
+                  >
+                    <div className="title-marquee-track">
+                      <span>{selectedSource?.title || "来源查看"}</span>
+                      {(selectedSource?.title?.length ?? 0) > 28 ? (
+                        <span aria-hidden="true" className="pl-10">
+                          {selectedSource?.title || "来源查看"}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {selectedSource?.url ? (
+                      <a
+                        className="motion-button inline-flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-white text-slate-600 hover:border-accent hover:text-accent"
+                        href={selectedSource.url}
+                        rel="noreferrer"
+                        target="_blank"
+                        title="打开原始链接"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </a>
+                    ) : null}
+                    {selectedSource ? (
+                      <button
+                        className="motion-button inline-flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-white text-slate-600 hover:border-accent hover:text-accent disabled:opacity-60"
+                        disabled={reprocessLoading}
+                        onClick={() => reprocessSource()}
+                        title="刷新来源内容"
+                        type="button"
+                      >
+                        {reprocessLoading ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCcw className="h-4 w-4" />
+                        )}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : leftMode === "collapsed" && !isCompact ? null : (
+                <div className="font-semibold text-slate-900">来源</div>
+              )}
               <button
-                className="rounded-full border border-line p-2 text-slate-500 transition hover:border-accent hover:text-accent"
-                onClick={() => setLeftCollapsed((value) => !value)}
+                className="motion-button rounded-full border border-line p-2 text-slate-500 hover:border-accent hover:text-accent"
+                onClick={() =>
+                  setLeftMode((current) => (current === "collapsed" ? "list" : "collapsed"))
+                }
                 type="button"
               >
-                {leftCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+                {leftMode === "collapsed" ? (
+                  <PanelLeftOpen className="h-4 w-4" />
+                ) : (
+                  <PanelLeftClose className="h-4 w-4" />
+                )}
               </button>
             </div>
 
-            {!isCompact && leftCollapsed ? (
+            {leftMode === "collapsed" && !isCompact ? (
               <div className="flex flex-1 flex-col items-center gap-3 overflow-y-auto p-3">
-                {snapshot.sources.map((source) => {
-                  const Icon =
-                    source.type === "web" ? Globe : source.type === "youtube" ? Video : FileText;
+                {sortedSources.map((source) => {
+                  const Icon = sourceIcon(source.type);
                   const inScope = selectedScopeSourceIds.includes(source.id);
                   return (
-                    <div
-                      className="relative"
+                    <button
+                      className={cn(
+                        "relative inline-flex h-12 w-12 items-center justify-center rounded-2xl border transition",
+                        selectedSourceId === source.id
+                          ? "border-accent bg-accentSoft text-accent"
+                          : "border-line bg-white text-slate-500",
+                      )}
                       key={source.id}
-                      onMouseEnter={() => setHoveredSourceId(source.id)}
-                      onMouseLeave={() =>
-                        setHoveredSourceId((current) => (current === source.id ? null : current))
-                      }
+                      onClick={() => openViewer(source.id)}
+                      title={source.title}
+                      type="button"
                     >
-                      <button
-                        className={cn(
-                          "inline-flex h-12 w-12 items-center justify-center rounded-2xl border transition",
-                          selectedSourceId === source.id
-                            ? "border-accent bg-accentSoft text-accent"
-                            : "border-line bg-white text-slate-500",
-                        )}
-                        onClick={() => {
-                          setSelectedSourceId(source.id);
-                          setLeftCollapsed(false);
-                        }}
-                        type="button"
-                      >
-                        <Icon className="h-5 w-5" />
-                      </button>
-                      <button
-                        className={cn(
-                          "absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] transition",
-                          inScope
-                            ? "border-accent bg-accent text-white"
-                            : "border-line bg-white text-slate-400",
-                        )}
-                        onClick={() => toggleSourceScope(source.id)}
-                        type="button"
-                      >
-                        <Check className="h-3 w-3" />
-                      </button>
-                      {hoveredSourceId === source.id ? (
-                        <div className="pointer-events-none absolute left-[56px] top-1/2 z-10 -translate-y-1/2 whitespace-nowrap rounded-full border border-line bg-white px-3 py-1 text-xs text-slate-600 shadow-sm">
-                          {source.title}
-                        </div>
+                      <Icon className="h-5 w-5" />
+                      {inScope ? (
+                        <span className="absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-white">
+                          <Check className="h-3 w-3" />
+                        </span>
                       ) : null}
-                    </div>
+                    </button>
                   );
                 })}
               </div>
-            ) : (
+            ) : null}
+
+            {leftMode === "list" ? (
               <>
-                <div className="shrink-0 space-y-3 border-b border-line/70 p-4">
+                <div className="shrink-0 space-y-3 border-b border-line/70 px-4 py-4">
                   <div className="grid grid-cols-3 gap-2">
                     {[
-                      { type: "web" as const, Icon: Globe },
-                      { type: "youtube" as const, Icon: Video },
-                      { type: "pdf" as const, Icon: FileText },
-                    ].map(({ type, Icon }) => (
+                      { type: "web" as const, Icon: Globe, label: "网页" },
+                      { type: "youtube" as const, Icon: Video, label: "视频" },
+                      { type: "pdf" as const, Icon: FileText, label: "PDF" },
+                    ].map(({ type, Icon, label }) => (
                       <button
                         className={cn(
                           "flex items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-sm transition",
@@ -703,129 +1052,115 @@ export function WorkspaceShell({
                         type="button"
                       >
                         <Icon className="h-4 w-4" />
-                        {type}
+                        {label}
                       </button>
                     ))}
                   </div>
 
-                  <div className="flex gap-3">
+                  <div className="flex min-w-0 gap-3">
                     {sourceType === "pdf" ? (
-                      <label className="flex flex-1 items-center rounded-2xl border border-line bg-fog px-4 py-3 text-sm text-slate-600">
+                      <label
+                        className="flex min-w-0 flex-1 items-center rounded-2xl border border-line bg-fog px-4 py-3 text-sm text-slate-600"
+                        title={sourceFile?.name || "选择 PDF 文件"}
+                      >
                         <input
                           accept="application/pdf"
                           className="hidden"
                           onChange={(event) => setSourceFile(event.target.files?.[0] || null)}
                           type="file"
                         />
-                        <span className="truncate">{sourceFile?.name || "选择文件"}</span>
+                        <span className="min-w-0 truncate">{sourceFile?.name || "选择 PDF 文件"}</span>
                       </label>
                     ) : (
                       <input
                         className="min-w-0 flex-1 rounded-2xl border border-line bg-fog px-4 py-3 text-sm outline-none focus:border-accent"
                         onChange={(event) => setSourceInput(event.target.value)}
-                        placeholder={sourceType === "web" ? "网页 URL" : "YouTube URL"}
+                        placeholder={sourceType === "web" ? "输入网页 URL" : "输入 YouTube URL"}
                         value={sourceInput}
                       />
                     )}
 
                     <button
-                      className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition hover:bg-accent disabled:opacity-50"
+                      className="inline-flex w-[96px] shrink-0 items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-accent disabled:opacity-60"
                       disabled={
                         importLoading || isPending || (sourceType === "pdf" ? !sourceFile : !sourceInput.trim())
                       }
                       onClick={importSource}
                       type="button"
                     >
-                      <Upload className="h-4 w-4" />
+                      {importLoading ? <LoadingDots label="导入中" /> : <span className="inline-flex items-center gap-2"><Upload className="h-4 w-4" />导入</span>}
                     </button>
                   </div>
 
                   {importError ? (
-                    <div className="text-xs text-red-500">{importError}</div>
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
+                      {importError}
+                    </div>
                   ) : null}
                 </div>
 
-                <div className="grid min-h-0 flex-1 grid-cols-[64px_minmax(0,1fr)]">
-                  <div className="overflow-visible border-r border-line/70 p-3">
-                    <div className="flex flex-col gap-2">
-                      {snapshot.sources.map((source) => {
-                        const Icon =
-                          source.type === "web" ? Globe : source.type === "youtube" ? Video : FileText;
-                        const inScope = selectedScopeSourceIds.includes(source.id);
-                        return (
-                          <div
-                            className="relative"
-                            key={source.id}
-                            onMouseEnter={() => setHoveredSourceId(source.id)}
-                            onMouseLeave={() =>
-                              setHoveredSourceId((current) =>
-                                current === source.id ? null : current,
-                              )
-                            }
-                          >
-                            <button
-                              className={cn(
-                                "inline-flex h-11 w-11 items-center justify-center rounded-2xl border transition",
-                                selectedSourceId === source.id
-                                  ? "border-accent bg-accentSoft text-accent"
-                                  : "border-line bg-white text-slate-500",
-                              )}
-                              onClick={() => setSelectedSourceId(source.id)}
-                              title={source.title}
-                              type="button"
-                            >
-                              <Icon className="h-5 w-5" />
-                            </button>
-                            <button
-                              className={cn(
-                                "absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] transition",
-                                inScope
-                                  ? "border-accent bg-accent text-white"
-                                  : "border-line bg-white text-slate-400",
-                              )}
-                              onClick={() => toggleSourceScope(source.id)}
-                              type="button"
-                            >
-                              <Check className="h-3 w-3" />
-                            </button>
-                            {hoveredSourceId === source.id ? (
-                              <div className="pointer-events-none absolute left-[52px] top-1/2 z-10 -translate-y-1/2 whitespace-nowrap rounded-full border border-line bg-white px-3 py-1 text-xs text-slate-600 shadow-sm">
-                                {source.title}
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div className="min-h-0 overflow-visible p-3">
-                    <SourceViewer
-                      focusTarget={focusTarget}
-                      inScope={selectedSourceId ? selectedScopeSourceIds.includes(selectedSourceId) : false}
-                      onDelete={deleteCurrentSource}
-                      onToggleScope={
-                        selectedSourceId ? () => toggleSourceScope(selectedSourceId) : undefined
-                      }
-                      source={selectedSource}
-                    />
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                  <div className="space-y-3">
+                    {sortedSources.map((source) => (
+                      <SourceRow
+                        editing={editingSourceId === source.id}
+                        editingTitle={editingSourceId === source.id ? editingSourceTitle : source.title}
+                        inScope={selectedScopeSourceIds.includes(source.id)}
+                        key={source.id}
+                        loading={rowLoadingId === source.id}
+                        onDelete={() => deleteSource(source.id)}
+                        onEditCancel={() => setEditingSourceId(null)}
+                        onEditChange={setEditingSourceTitle}
+                        onEditCommit={() => saveSourceTitle(source.id)}
+                        onSelect={() => setSelectedSourceId(source.id)}
+                        onStartEdit={() => {
+                          setEditingSourceId(source.id);
+                          setEditingSourceTitle(source.title);
+                        }}
+                        onToggleScope={() => toggleSourceScope(source.id)}
+                        onView={() => openViewer(source.id)}
+                        selected={selectedSourceId === source.id}
+                        source={source}
+                      />
+                    ))}
+                    {sortedSources.length === 0 ? (
+                      <div className="rounded-[24px] border border-dashed border-line bg-white/60 p-8 text-center text-sm text-slate-500">
+                        还没有来源，先导入网页、视频或 PDF。
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </>
-            )}
+            ) : null}
+
+            {leftMode === "viewer" ? (
+              <div className="min-h-0 flex-1 px-4 py-4">
+                {sourceActionError ? (
+                  <div className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                    {sourceActionError}
+                  </div>
+                ) : null}
+                {selectedSourceId && sourceDetailLoadingId === selectedSourceId && !selectedSource ? (
+                  <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-line bg-white/60 text-sm text-slate-500">
+                    <LoadingDots label="载入来源" />
+                  </div>
+                ) : (
+                  <SourceViewer
+                    focusTarget={focusTarget}
+                    onSubmitTranscript={selectedSource ? (text) => reprocessSource(text) : undefined}
+                    reprocessLoading={reprocessLoading}
+                    source={selectedSource}
+                  />
+                )}
+              </div>
+            ) : null}
           </aside>
 
-          <section
-            className={cn(
-              "flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
-              isCompact ? "h-full" : "",
-            )}
-          >
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel">
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-line/70 px-5">
               <div className="font-semibold text-slate-900">摘要</div>
               <div className="flex items-center gap-2">
-                {saveState === "saved" ? (
-                  <span className="text-sm text-accent">已保存</span>
-                ) : null}
+                {saveState === "saved" ? <span className="text-sm text-accent">已保存</span> : null}
                 <button
                   className="inline-flex items-center gap-2 rounded-2xl bg-accent px-3 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
                   disabled={summaryLoading}
@@ -833,14 +1168,15 @@ export function WorkspaceShell({
                   type="button"
                 >
                   <RefreshCcw className={cn("h-4 w-4", summaryLoading && "animate-spin")} />
-                  {summaryLoading ? <LoadingDots /> : "生成"}
+                  {summaryLoading ? <LoadingDots label="生成中" /> : "生成"}
                 </button>
                 <button
-                  className="inline-flex items-center rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
-                  onClick={() => setIsEditingSummary((value) => !value)}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm text-slate-700 transition hover:border-accent hover:text-accent"
+                  onClick={() => (isEditingSummary ? saveSummary() : setIsEditingSummary(true))}
                   type="button"
                 >
-                  {isEditingSummary ? "预览" : "编辑"}
+                  {isEditingSummary ? <Save className="h-4 w-4" /> : <SquarePen className="h-4 w-4" />}
+                  {isEditingSummary ? "保存" : "编辑"}
                 </button>
                 {!isEditingSummary ? (
                   <button
@@ -874,17 +1210,15 @@ export function WorkspaceShell({
 
           <aside
             className={cn(
-              "relative flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
-              isCompact
-                ? "absolute inset-y-0 right-0 z-20 w-[min(92vw,420px)] transition-transform duration-300"
-                : "",
+              "motion-panel relative flex min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-panel",
+              isCompact ? "absolute inset-y-0 right-0 z-20 w-[min(92vw,420px)]" : "",
               isCompact && rightCollapsed ? "translate-x-[110%]" : "translate-x-0",
             )}
           >
             <div className="flex h-16 shrink-0 items-center justify-between border-b border-line/70 px-4">
               {!rightCollapsed || isCompact ? <div className="font-semibold text-slate-900">聊天</div> : null}
               <div className="flex items-center gap-2">
-                {(!rightCollapsed || isCompact) && threads.length > 0 ? (
+                {(!rightCollapsed || isCompact) && threadSummaries.length > 0 ? (
                   <button
                     className={cn(
                       "rounded-full border p-2 text-slate-500 transition hover:border-accent hover:text-accent",
@@ -929,7 +1263,7 @@ export function WorkspaceShell({
                       新聊天
                     </button>
                     <div className="grid gap-2">
-                      {threads.map((thread) => (
+                      {threadSummaries.map((thread) => (
                         <button
                           className={cn(
                             "rounded-2xl border px-4 py-3 text-left text-sm transition",
@@ -938,13 +1272,19 @@ export function WorkspaceShell({
                               : "border-line bg-white text-slate-700 hover:border-accent",
                           )}
                           key={thread.id}
-                          onClick={() => {
+                          onClick={async () => {
                             setActiveThreadId(thread.id);
                             setHistoryOpen(false);
+                            await loadThreadMessages(thread.id);
                           }}
                           type="button"
                         >
                           <div className="truncate font-medium">{thread.title}</div>
+                          {thread.lastMessagePreview ? (
+                            <div className="mt-1 truncate text-xs text-slate-500">
+                              {thread.lastMessagePreview}
+                            </div>
+                          ) : null}
                         </button>
                       ))}
                     </div>
@@ -974,7 +1314,7 @@ export function WorkspaceShell({
                           <div className="mt-4 grid gap-2">
                             {message.citations.map((citation, index) => (
                               <button
-                                className="rounded-2xl border border-line bg-fog/80 px-3 py-3 text-left text-xs text-slate-600"
+                                className="rounded-2xl border border-line bg-fog/80 px-3 py-3 text-left text-xs text-slate-600 transition hover:border-accent hover:bg-white"
                                 key={`${message.id}-${index}`}
                                 onClick={() => handleCitationClick(citation)}
                                 type="button"
@@ -989,15 +1329,30 @@ export function WorkspaceShell({
                         ) : null}
                       </div>
                     ))
+                  ) : (
+                    <div className="rounded-[24px] border border-dashed border-line bg-white/60 px-4 py-8 text-center text-sm text-slate-500">
+                      从右下角输入问题，系统会基于当前选中的来源范围回答。
+                    </div>
+                  )}
+                  {threadLoadingId === activeThreadId ? (
+                    <div className="rounded-[24px] border border-line bg-white px-4 py-4 text-sm text-slate-500">
+                      <LoadingDots label="载入对话" />
+                    </div>
                   ) : null}
                   {chatLoading ? (
                     <div className="rounded-[24px] border border-line bg-white px-4 py-4 text-sm text-slate-500">
-                      思考中...
+                      <LoadingDots label="思考中" />
                     </div>
                   ) : null}
                 </div>
 
                 <div className="shrink-0 border-t border-line/70 p-4">
+                  {modelCatalog.degraded && modelCatalog.reason ? (
+                    <div className="mb-3 flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
+                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{modelCatalog.reason}</span>
+                    </div>
+                  ) : null}
                   <div className="rounded-[24px] border border-line bg-white p-3">
                     <textarea
                       className="h-16 w-full resize-none px-2 py-2 text-sm leading-7 outline-none"
@@ -1038,6 +1393,20 @@ export function WorkspaceShell({
                             </option>
                           ))}
                         </select>
+                        <button
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-fog text-slate-600 transition hover:text-accent"
+                          onClick={() => {
+                            void refreshModels();
+                          }}
+                          title="刷新模型列表"
+                          type="button"
+                        >
+                          {modelLoading ? (
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCcw className="h-4 w-4" />
+                          )}
+                        </button>
                       </div>
                       <button
                         className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-white transition hover:bg-accent disabled:opacity-50"
@@ -1051,17 +1420,7 @@ export function WorkspaceShell({
                   </div>
                 </div>
               </>
-            ) : (
-              <div className="flex flex-1 items-start justify-center p-3">
-                <button
-                  className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-white text-slate-500"
-                  onClick={() => setRightCollapsed(false)}
-                  type="button"
-                >
-                  <PanelRightOpen className="h-5 w-5" />
-                </button>
-              </div>
-            )}
+            ) : null}
           </aside>
         </section>
       </div>

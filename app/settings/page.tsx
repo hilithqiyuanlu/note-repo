@@ -6,8 +6,14 @@ import { getSettings } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
-export default function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ back?: string }>;
+}) {
+  const { back } = await searchParams;
   const settings = getSettings();
+  const backHref = back?.startsWith("/") ? back : "/";
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-6 py-10">
@@ -17,10 +23,10 @@ export default function SettingsPage() {
         </div>
         <Link
           className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm transition hover:border-accent hover:text-accent"
-          href="/"
+          href={backHref}
         >
           <ChevronLeft className="h-4 w-4" />
-          返回
+          {backHref === "/" ? "返回豆脑" : "返回工作台"}
         </Link>
       </div>
 

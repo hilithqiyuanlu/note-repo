@@ -71,14 +71,21 @@ export function localAnswer(question: string, segments: SegmentRecord[]) {
     };
   });
 
+  const topSourceTitles = Array.from(new Set(segments.slice(0, 3).map((segment) => segment.sourceTitle)));
+  const evidence = segments
+    .slice(0, 3)
+    .map((segment) => `- ${clampText(segment.content, 120)}`)
+    .join("\n");
+
   const answer = [
-    "基于当前 notebook，我先给出一个压缩回答：",
-    segments
-      .slice(0, 3)
-      .map((segment, index) => `${index + 1}. ${clampText(segment.content, 180)}`)
-      .join("\n"),
+    `结合当前资料，对“${question}”的直接回答如下：`,
     "",
-    "如果你要继续追问，最适合再展开的是这些引用片段。",
+    segments[0] ? clampText(segments[0].content, 220) : "当前没有足够证据回答。",
+    "",
+    `主要依据来自：${topSourceTitles.join("、")}。`,
+    evidence,
+    "",
+    "如果问题需要更完整结论，请检查远端模型配置或继续补充更直接的来源片段。",
   ].join("\n");
 
   return { answer, citations };

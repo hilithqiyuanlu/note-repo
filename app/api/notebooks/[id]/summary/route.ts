@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { generateSummary } from "@/lib/ai/provider";
-import { getNotebookSnapshot, upsertNote } from "@/lib/db/queries";
+import { getNotebookSnapshot, getSettings, upsertNote } from "@/lib/db/queries";
 
 const summarySchema = z.object({
   markdown: z.string().optional(),
@@ -22,11 +22,12 @@ export async function POST(
     return NextResponse.json({ error: "Notebook not found" }, { status: 404 });
   }
 
+  const settings = getSettings();
   const markdown =
     payload.markdown ??
     (await generateSummary(
       id,
-      payload.modelKey ?? snapshot.note?.id ?? undefined,
+      payload.modelKey ?? settings.chatModel,
       payload.sourceIds,
     ));
 

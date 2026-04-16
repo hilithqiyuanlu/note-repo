@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 
 import { WorkspaceShell } from "@/components/workspace-shell";
-import { getNotebookSnapshot, getSettings, listThreads } from "@/lib/db/queries";
-import { listModels } from "@/lib/ai/provider";
+import { buildInitialModelCatalog } from "@/lib/ai/provider";
+import { getSettings, getThreadMessages, getNotebookSnapshot, listThreadSummaries } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -18,15 +18,19 @@ export default async function NotebookWorkspacePage({
     notFound();
   }
 
-  const [threads, models] = await Promise.all([Promise.resolve(listThreads(id)), listModels()]);
+  const threadSummaries = listThreadSummaries(id);
+  const activeThreadId = threadSummaries[0]?.id ?? null;
+  const activeThreadMessages = activeThreadId ? getThreadMessages(activeThreadId) : [];
   const settings = getSettings();
 
   return (
     <WorkspaceShell
-      initialModels={models}
+      initialActiveThreadId={activeThreadId}
+      initialActiveThreadMessages={activeThreadMessages}
+      initialModelCatalog={buildInitialModelCatalog(settings)}
       initialSettings={settings}
       initialSnapshot={snapshot}
-      initialThreads={threads}
+      initialThreadSummaries={threadSummaries}
     />
   );
 }

@@ -12,8 +12,25 @@ import {
   sourceSegments,
   sources,
 } from "@/lib/db/schema";
-import type { AppSettingsRecord, Citation, NotebookSnapshot, SegmentRecord } from "@/lib/types";
-import { createId, nowIso, safeJsonParse } from "@/lib/utils";
+import { buildSourcePreview } from "@/lib/source-preview";
+import type {
+  AppSettingsRecord,
+  Citation,
+  NotebookSnapshot,
+  SegmentRecord,
+  ThreadMessage,
+  ThreadSummary,
+} from "@/lib/types";
+import { clampText, createId, nowIso, safeJsonParse } from "@/lib/utils";
+
+function sortSourcesByTitle<T extends { title: string }>(items: T[]) {
+  return [...items].sort((left, right) =>
+    left.title.localeCompare(right.title, "zh-CN", {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+}
 
 export function deleteSource(sourceId: string) {
   const db = getDb();
@@ -152,12 +169,16 @@ export function getNotebookSnapshot(notebookId: string): NotebookSnapshot | null
 
   const note = db.select().from(notes).where(eq(notes.notebookId, notebookId)).get() ?? null;
 
-  const sourceRows = db
+  const sourceRows = sortSourcesByTitle(
+    db
     .select()
     .from(sources)
     .where(eq(sources.notebookId, notebookId))
     .orderBy(asc(sources.createdAt))
-    .all();
+    .all(),
+  );
+
+  const initialSourceDetail = sourceRows[0] ? getSourceDetail(sourceRows[0].id) : null;
 
   return {
     notebook,
@@ -166,6 +187,7 @@ export function getNotebookSnapshot(notebookId: string): NotebookSnapshot | null
       ...item,
       metadata: safeJsonParse<Record<string, unknown>>(item.metadata, {}),
     })),
+    initialSourceDetail,
   };
 }
 
@@ -208,10 +230,19 @@ export function getSettings(): AppSettingsRecord {
     chatBaseUrl: row.chatBaseUrl,
     chatApiKey: row.chatApiKey,
     chatModel: row.chatModel,
+    localChatEnabled: row.localChatEnabled,
+    localChatBaseUrl: row.localChatBaseUrl,
+    localChatModel: row.localChatModel,
+    localChatLabel: row.localChatLabel,
     embeddingProvider: row.embeddingProvider,
     embeddingBaseUrl: row.embeddingBaseUrl,
     embeddingApiKey: row.embeddingApiKey,
     embeddingModel: row.embeddingModel,
+    proxyEnabled: row.proxyEnabled,
+    proxyProtocol: row.proxyProtocol,
+    proxyHost: row.proxyHost,
+    proxyPort: row.proxyPort,
+    proxyBypassHosts: row.proxyBypassHosts,
     tavilyApiKey: row.tavilyApiKey,
     exportDir: row.exportDir,
     updatedAt: row.updatedAt,
@@ -226,10 +257,19 @@ export function updateSettings(input: Partial<AppSettingsRecord>) {
       chatBaseUrl: input.chatBaseUrl,
       chatApiKey: input.chatApiKey,
       chatModel: input.chatModel,
+      localChatEnabled: input.localChatEnabled,
+      localChatBaseUrl: input.localChatBaseUrl,
+      localChatModel: input.localChatModel,
+      localChatLabel: input.localChatLabel,
       embeddingProvider: input.embeddingProvider,
       embeddingBaseUrl: input.embeddingBaseUrl,
       embeddingApiKey: input.embeddingApiKey,
       embeddingModel: input.embeddingModel,
+      proxyEnabled: input.proxyEnabled,
+      proxyProtocol: input.proxyProtocol,
+      proxyHost: input.proxyHost,
+      proxyPort: input.proxyPort,
+      proxyBypassHosts: input.proxyBypassHosts,
       tavilyApiKey: input.tavilyApiKey,
       exportDir: input.exportDir,
       updatedAt: nowIso(),
@@ -399,7 +439,7 @@ export function getSourceDetail(sourceId: string) {
     .orderBy(asc(sourceAssets.createdAt))
     .all();
 
-  return {
+  const parsedSource = {
     ...source,
     metadata: safeJsonParse<Record<string, unknown>>(source.metadata, {}),
     segments: segments.map((segment) => ({
@@ -410,6 +450,16 @@ export function getSourceDetail(sourceId: string) {
       ...asset,
       metadata: safeJsonParse<Record<string, unknown>>(asset.metadata, {}),
     })),
+  };
+
+  return {
+    ...parsedSource,
+    preview: buildSourcePreview({
+      type: parsedSource.type,
+      url: parsedSource.url,
+      metadata: parsedSource.metadata,
+      assets: parsedSource.assets,
+    }),
   };
 }
 
@@ -495,6 +545,13 @@ export function createThread(notebookId: string, title: string, modelKey?: strin
 }
 
 export function listThreads(notebookId: string) {
+  return listThreadSummaries(notebookId).map((thread) => ({
+    ...thread,
+    messages: getThreadMessages(thread.id),
+  }));
+}
+
+export function listThreadSummaries(notebookId: string): ThreadSummary[] {
   const db = getDb();
   const threads = db
     .select()
@@ -503,19 +560,32 @@ export function listThreads(notebookId: string) {
     .orderBy(desc(chatThreads.updatedAt))
     .all();
 
-  return threads.map((thread) => ({
-    ...thread,
-    messages: db
-      .select()
+  return threads.map((thread) => {
+    const lastMessage = db
+      .select({ content: chatMessages.content })
       .from(chatMessages)
       .where(eq(chatMessages.threadId, thread.id))
-      .orderBy(asc(chatMessages.createdAt))
-      .all()
-      .map((message) => ({
+      .orderBy(desc(chatMessages.createdAt))
+      .get();
+
+    return {
+      ...thread,
+      lastMessagePreview: lastMessage ? clampText(lastMessage.content, 64) : null,
+    };
+  });
+}
+
+export function getThreadMessages(threadId: string): ThreadMessage[] {
+  return getDb()
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.threadId, threadId))
+    .orderBy(asc(chatMessages.createdAt))
+    .all()
+    .map((message) => ({
       ...message,
       citations: safeJsonParse<Citation[]>(message.citations, []),
-    })),
-  }));
+    }));
 }
 
 export function appendMessage(params: {

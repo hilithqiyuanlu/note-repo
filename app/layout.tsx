@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import "@/app/globals.css";
 
 export const metadata: Metadata = {
-  title: "NoteRepo",
+  title: "豆脑",
   description: "本地优先的三栏知识工作台",
 };
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { importSource } from "@/lib/ingest";
+import { serializeAppError } from "@/lib/remote";
 
 export async function POST(request: Request) {
   const contentType = request.headers.get("content-type") || "";
@@ -47,11 +48,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ sourceId }, { status: 201 });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "导入失败",
-      },
-      { status: 400 },
-    );
+    return NextResponse.json(serializeAppError(error, "导入失败"), { status: 400 });
   }
 }

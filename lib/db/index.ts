@@ -10,6 +10,37 @@ import { nowIso } from "@/lib/utils";
 let client: Database.Database | null = null;
 let orm: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
+function hasColumn(db: Database.Database, tableName: string, columnName: string) {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
+function ensureSettingsColumns(db: Database.Database) {
+  const columnSql = [
+    "ALTER TABLE app_settings ADD COLUMN local_chat_enabled INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE app_settings ADD COLUMN local_chat_base_url TEXT",
+    "ALTER TABLE app_settings ADD COLUMN local_chat_model TEXT",
+    "ALTER TABLE app_settings ADD COLUMN local_chat_label TEXT",
+    "ALTER TABLE app_settings ADD COLUMN proxy_enabled INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE app_settings ADD COLUMN proxy_protocol TEXT NOT NULL DEFAULT 'http'",
+    "ALTER TABLE app_settings ADD COLUMN proxy_host TEXT",
+    "ALTER TABLE app_settings ADD COLUMN proxy_port INTEGER",
+    "ALTER TABLE app_settings ADD COLUMN proxy_bypass_hosts TEXT",
+  ] as const;
+
+  for (const sql of columnSql) {
+    const match = sql.match(/ADD COLUMN ([a-z_]+)/i);
+    const columnName = match?.[1];
+    if (!columnName) {
+      continue;
+    }
+
+    if (!hasColumn(db, "app_settings", columnName)) {
+      db.prepare(sql).run();
+    }
+  }
+}
+
 function bootstrap(db: Database.Database) {
   db.pragma("journal_mode = WAL");
   db.exec(`
@@ -94,10 +125,19 @@ function bootstrap(db: Database.Database) {
       chat_base_url TEXT,
       chat_api_key TEXT,
       chat_model TEXT NOT NULL DEFAULT 'gemini-2.5-pro',
+      local_chat_enabled INTEGER NOT NULL DEFAULT 0,
+      local_chat_base_url TEXT,
+      local_chat_model TEXT,
+      local_chat_label TEXT,
       embedding_provider TEXT NOT NULL DEFAULT 'ollama',
       embedding_base_url TEXT,
       embedding_api_key TEXT,
       embedding_model TEXT NOT NULL DEFAULT 'nomic-embed-text',
+      proxy_enabled INTEGER NOT NULL DEFAULT 0,
+      proxy_protocol TEXT NOT NULL DEFAULT 'http',
+      proxy_host TEXT,
+      proxy_port INTEGER,
+      proxy_bypass_hosts TEXT,
       tavily_api_key TEXT,
       export_dir TEXT,
       updated_at TEXT NOT NULL
@@ -111,6 +151,8 @@ function bootstrap(db: Database.Database) {
     );
   `);
 
+  ensureSettingsColumns(db);
+
   const hasSettings = db
     .prepare("SELECT id FROM app_settings WHERE id = 1")
     .get() as { id: number } | undefined;
@@ -121,10 +163,35 @@ function bootstrap(db: Database.Database) {
         id,
         chat_provider,
         chat_model,
+        local_chat_enabled,
+        local_chat_base_url,
+        local_chat_model,
+        local_chat_label,
         embedding_provider,
         embedding_model,
+        proxy_enabled,
+        proxy_protocol,
+        proxy_host,
+        proxy_port,
+        proxy_bypass_hosts,
         updated_at
-      ) VALUES (1, 'heuristic', 'gemini-2.5-pro', 'ollama', 'nomic-embed-text', ?)`,
+      ) VALUES (
+        1,
+        'heuristic',
+        'gemini-2.5-pro',
+        1,
+        'http://127.0.0.1:11434/v1',
+        'qwen3.5:4b',
+        'Ollama / qwen3.5:4b',
+        'ollama',
+        'nomic-embed-text',
+        1,
+        'http',
+        '127.0.0.1',
+        7897,
+        'localhost,127.0.0.1,::1',
+        ?
+      )`,
     ).run(nowIso());
   } else {
     db.prepare(
@@ -142,6 +209,32 @@ function bootstrap(db: Database.Database) {
        ) AND (
          embedding_model IS NULL OR embedding_model = '' OR embedding_model = 'heuristic-embed'
        )`,
+    ).run(nowIso());
+    db.prepare(
+      `UPDATE app_settings
+       SET local_chat_enabled = CASE
+             WHEN local_chat_enabled = 0
+               AND (local_chat_base_url IS NULL OR local_chat_base_url = '')
+               AND (local_chat_model IS NULL OR local_chat_model = '')
+             THEN 1
+             ELSE COALESCE(local_chat_enabled, 1)
+           END,
+           local_chat_base_url = COALESCE(NULLIF(local_chat_base_url, ''), 'http://127.0.0.1:11434/v1'),
+           local_chat_model = COALESCE(NULLIF(local_chat_model, ''), 'qwen3.5:4b'),
+           local_chat_label = COALESCE(NULLIF(local_chat_label, ''), 'Ollama / qwen3.5:4b'),
+           proxy_enabled = CASE
+             WHEN proxy_enabled = 0
+               AND (proxy_host IS NULL OR proxy_host = '')
+               AND proxy_port IS NULL
+             THEN 1
+             ELSE COALESCE(proxy_enabled, 1)
+           END,
+           proxy_protocol = COALESCE(NULLIF(proxy_protocol, ''), 'http'),
+           proxy_host = COALESCE(NULLIF(proxy_host, ''), '127.0.0.1'),
+           proxy_port = COALESCE(proxy_port, 7897),
+           proxy_bypass_hosts = COALESCE(NULLIF(proxy_bypass_hosts, ''), 'localhost,127.0.0.1,::1'),
+           updated_at = ?
+       WHERE id = 1`,
     ).run(nowIso());
   }
 }

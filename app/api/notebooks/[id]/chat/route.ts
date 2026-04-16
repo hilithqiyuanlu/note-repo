@@ -5,7 +5,8 @@ import { chatWithNotebook } from "@/lib/ai/provider";
 import {
   appendMessage,
   createThread,
-  listThreads,
+  getThreadMessages,
+  listThreadSummaries,
   updateThreadTitle,
 } from "@/lib/db/queries";
 import { clampText } from "@/lib/utils";
@@ -58,6 +59,7 @@ export async function POST(
     citations: result.citations,
     usedWebSearch: result.usedWebSearch,
     externalResults: result.externalResults,
-    threads: listThreads(id),
+    threadSummaries: listThreadSummaries(id),
+    activeThreadMessages: getThreadMessages(threadId),
   });
 }

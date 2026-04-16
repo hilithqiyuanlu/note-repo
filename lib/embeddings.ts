@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import OpenAI from "openai";
 
 import { getSettings } from "@/lib/db/queries";
+import { buildHttpAgent } from "@/lib/remote";
 import { normalizeWhitespace } from "@/lib/utils";
 
 const VECTOR_SIZE = 64;
@@ -46,6 +47,12 @@ export async function embedText(text: string) {
   const client = new OpenAI({
     baseURL: settings.embeddingBaseUrl,
     apiKey: settings.embeddingApiKey || "ollama",
+    httpAgent: buildHttpAgent(
+      settings.embeddingBaseUrl,
+      /^https?:\/\/(127\.0\.0\.1|localhost|::1)/.test(settings.embeddingBaseUrl)
+        ? "local"
+        : "remote",
+    ),
   });
 
   try {

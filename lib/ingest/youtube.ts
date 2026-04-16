@@ -2,6 +2,7 @@ import { YoutubeTranscript } from "youtube-transcript";
 
 import { chunkParagraphs } from "@/lib/ingest/shared";
 import type { IngestResult } from "@/lib/ingest/types";
+import { AppError, ensureRemoteOk, fetchWithTimeout } from "@/lib/remote";
 import { createId, normalizeWhitespace } from "@/lib/utils";
 
 export interface VideoProvider {
@@ -43,20 +44,32 @@ function parseTranscriptText(text: string) {
   }));
 }
 
+function normalizeTranscriptTiming(offset: number, duration: number) {
+  if (duration > 120 || offset > 60 * 60 * 24) {
+    return {
+      offset: offset / 1000,
+      duration: duration / 1000,
+    };
+  }
+
+  return {
+    offset,
+    duration,
+  };
+}
+
 export class YouTubeProvider implements VideoProvider {
   match(url: string) {
     return /youtu\.?be/.test(url);
   }
 
   async fetchMeta(url: string) {
-    const response = await fetch(
-      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
-      { cache: "no-store" },
+    const response = ensureRemoteOk(
+      await fetchWithTimeout(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+      ),
+      "视频信息获取失败",
     );
-
-    if (!response.ok) {
-      return { title: url };
-    }
 
     const payload = (await response.json()) as {
       title?: string;
@@ -74,14 +87,16 @@ export class YouTubeProvider implements VideoProvider {
   async fetchTranscript(url: string) {
     const videoId = parseYouTubeId(url);
     if (!videoId) {
-      throw new Error("无法识别 YouTube 视频 ID");
+      throw new AppError({
+        code: "invalid_response",
+        message: "无法识别 YouTube 视频 ID",
+      });
     }
 
     const transcript = await YoutubeTranscript.fetchTranscript(videoId);
     return transcript.map((item) => ({
       text: item.text,
-      offset: item.offset,
-      duration: item.duration,
+      ...normalizeTranscriptTiming(item.offset, item.duration),
     }));
   }
 }
@@ -89,7 +104,14 @@ export class YouTubeProvider implements VideoProvider {
 const provider = new YouTubeProvider();
 
 export async function ingestYoutube(url: string, transcriptText?: string | null): Promise<IngestResult> {
-  const meta = await provider.fetchMeta(url);
+  const meta = await provider.fetchMeta(url).catch(
+    () =>
+      ({
+        title: url,
+        author: undefined,
+        thumbnail: undefined,
+      }) as Awaited<ReturnType<YouTubeProvider["fetchMeta"]>>,
+  );
 
   try {
     const transcript = await provider.fetchTranscript(url);

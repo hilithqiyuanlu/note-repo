@@ -2,8 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const root = /* turbopackIgnore: true */ process.cwd();
-const legacyStorageRoot = path.join(root, "storage");
+const legacyStorageRoot = path.join(
+  /* turbopackIgnore: true */ process.cwd(),
+  "storage",
+);
 const storageRoot =
   process.env.NOTEREPO_DATA_DIR || path.join(os.homedir(), ".noterepo");
 const uploadsRoot = path.join(storageRoot, "uploads");

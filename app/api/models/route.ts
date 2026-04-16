@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { listModels } from "@/lib/ai/provider";
+import { listModelCatalog } from "@/lib/ai/provider";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const models = await listModels();
-  return NextResponse.json({ models });
+  const catalog = await listModelCatalog();
+  return NextResponse.json(catalog);
 }
