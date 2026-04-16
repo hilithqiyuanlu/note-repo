@@ -93,7 +93,7 @@ function bootstrap(db: Database.Database) {
       chat_provider TEXT NOT NULL DEFAULT 'heuristic',
       chat_base_url TEXT,
       chat_api_key TEXT,
-      chat_model TEXT NOT NULL DEFAULT 'heuristic-chat',
+      chat_model TEXT NOT NULL DEFAULT 'gemini-2.5-pro',
       embedding_provider TEXT NOT NULL DEFAULT 'heuristic',
       embedding_base_url TEXT,
       embedding_api_key TEXT,
@@ -124,7 +124,13 @@ function bootstrap(db: Database.Database) {
         embedding_provider,
         embedding_model,
         updated_at
-      ) VALUES (1, 'heuristic', 'heuristic-chat', 'heuristic', 'heuristic-embed', ?)`,
+      ) VALUES (1, 'heuristic', 'gemini-2.5-pro', 'heuristic', 'heuristic-embed', ?)`,
+    ).run(nowIso());
+  } else {
+    db.prepare(
+      `UPDATE app_settings
+       SET chat_model = 'gemini-2.5-pro', updated_at = ?
+       WHERE id = 1 AND (chat_model IS NULL OR chat_model = '' OR chat_model = 'heuristic-chat')`,
     ).run(nowIso());
   }
 }

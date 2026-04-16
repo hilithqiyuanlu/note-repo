@@ -14,6 +14,12 @@ export async function listModels(): Promise<ModelOption[]> {
   const settings = getSettings();
   const fallback: ModelOption[] = [
     {
+      key: "gemini-2.5-pro",
+      label: "gemini-2.5-pro",
+      provider: "default",
+      kind: "chat",
+    },
+    {
       key: "heuristic-chat",
       label: "Heuristic Chat",
       provider: "heuristic",
@@ -55,15 +61,19 @@ export async function listModels(): Promise<ModelOption[]> {
       payload.models?.map((item) => item.name) ??
       [];
 
-    return [
-      ...fallback,
-      ...remoteModels.map((model) => ({
-        key: model,
-        label: model,
-        provider: settings.chatProvider,
-        kind: "chat" as const,
-      })),
-    ];
+    return Array.from(
+      new Map(
+        [
+          ...fallback,
+          ...remoteModels.map((model) => ({
+            key: model,
+            label: model,
+            provider: settings.chatProvider,
+            kind: "chat" as const,
+          })),
+        ].map((model) => [model.key, model]),
+      ).values(),
+    );
   } catch {
     return fallback;
   }

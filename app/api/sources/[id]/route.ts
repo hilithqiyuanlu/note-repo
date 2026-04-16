@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import fs from "node:fs";
 
-import { getSourceDetail } from "@/lib/db/queries";
+import { deleteSource, getSourceDetail } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -16,4 +17,25 @@ export async function GET(
   }
 
   return NextResponse.json(source);
+}
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const source = getSourceDetail(id);
+
+  if (!source) {
+    return NextResponse.json({ error: "Source not found" }, { status: 404 });
+  }
+
+  source.assets.forEach((asset) => {
+    if (asset.filePath.startsWith(process.cwd()) && fs.existsSync(asset.filePath)) {
+      fs.rmSync(asset.filePath, { force: true });
+    }
+  });
+
+  deleteSource(id);
+  return NextResponse.json({ ok: true, notebookId: source.notebookId });
 }

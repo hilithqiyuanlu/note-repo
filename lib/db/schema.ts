@@ -92,7 +92,7 @@ export const appSettings = sqliteTable("app_settings", {
   chatProvider: text("chat_provider").notNull().default("heuristic"),
   chatBaseUrl: text("chat_base_url"),
   chatApiKey: text("chat_api_key"),
-  chatModel: text("chat_model").notNull().default("heuristic-chat"),
+  chatModel: text("chat_model").notNull().default("gemini-2.5-pro"),
   embeddingProvider: text("embedding_provider").notNull().default("heuristic"),
   embeddingBaseUrl: text("embedding_base_url"),
   embeddingApiKey: text("embedding_api_key"),

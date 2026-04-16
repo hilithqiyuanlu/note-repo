@@ -15,6 +15,35 @@ import {
 import type { AppSettingsRecord, Citation, NotebookSnapshot, SegmentRecord } from "@/lib/types";
 import { createId, nowIso, safeJsonParse } from "@/lib/utils";
 
+export function deleteSource(sourceId: string) {
+  const db = getDb();
+  const sqlite = getSqlite();
+  const source = db.select().from(sources).where(eq(sources.id, sourceId)).get();
+
+  if (!source) {
+    return null;
+  }
+
+  const segmentIds = db
+    .select({ id: sourceSegments.id })
+    .from(sourceSegments)
+    .where(eq(sourceSegments.sourceId, sourceId))
+    .all()
+    .map((item) => item.id);
+
+  if (segmentIds.length > 0) {
+    db.delete(segmentEmbeddings).where(inArray(segmentEmbeddings.segmentId, segmentIds)).run();
+  }
+
+  sqlite.prepare("DELETE FROM source_segments_fts WHERE source_id = ?").run(sourceId);
+  db.delete(sourceAssets).where(eq(sourceAssets.sourceId, sourceId)).run();
+  db.delete(sourceSegments).where(eq(sourceSegments.sourceId, sourceId)).run();
+  db.delete(sources).where(eq(sources.id, sourceId)).run();
+  updateNotebookTimestamp(source.notebookId);
+
+  return source;
+}
+
 export function listNotebooks() {
   const db = getDb();
 

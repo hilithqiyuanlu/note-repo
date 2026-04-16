@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 
 import { formatTimestamp } from "@/lib/utils";
 
@@ -30,7 +30,13 @@ function pdfFileUrl(filePath: string) {
   return `/api/files/${filename}`;
 }
 
-export function SourceViewer({ source }: { source: SourceDetail | null }) {
+export function SourceViewer({
+  source,
+  onDelete,
+}: {
+  source: SourceDetail | null;
+  onDelete?: () => void;
+}) {
   if (!source) {
     return (
       <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-line bg-white/60 p-8 text-center text-sm text-slate-500">
@@ -43,11 +49,8 @@ export function SourceViewer({ source }: { source: SourceDetail | null }) {
 
   return (
     <div className="flex h-full flex-col rounded-[24px] border border-white/80 bg-white/85 shadow-panel">
-      <div className="border-b border-line/80 px-5 py-4">
-        <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-400">{source.type}</div>
-        <div className="text-lg font-semibold text-slate-900">{source.title}</div>
-        <div className="mt-2 flex items-center gap-3 text-xs text-slate-500">
-          <span>状态：{source.status}</span>
+      <div className="flex items-center justify-between border-b border-line/80 px-5 py-4">
+        <div className="flex items-center gap-3 text-xs text-slate-500">
           {source.url ? (
             <a
               className="inline-flex items-center gap-1 text-accent"
@@ -60,6 +63,15 @@ export function SourceViewer({ source }: { source: SourceDetail | null }) {
             </a>
           ) : null}
         </div>
+        {onDelete ? (
+          <button
+            className="rounded-full border border-line p-1.5 text-slate-400 transition hover:border-red-300 hover:text-red-500"
+            onClick={onDelete}
+            type="button"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto p-5">
