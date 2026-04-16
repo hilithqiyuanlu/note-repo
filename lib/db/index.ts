@@ -94,10 +94,10 @@ function bootstrap(db: Database.Database) {
       chat_base_url TEXT,
       chat_api_key TEXT,
       chat_model TEXT NOT NULL DEFAULT 'gemini-2.5-pro',
-      embedding_provider TEXT NOT NULL DEFAULT 'heuristic',
+      embedding_provider TEXT NOT NULL DEFAULT 'ollama',
       embedding_base_url TEXT,
       embedding_api_key TEXT,
-      embedding_model TEXT NOT NULL DEFAULT 'heuristic-embed',
+      embedding_model TEXT NOT NULL DEFAULT 'nomic-embed-text',
       tavily_api_key TEXT,
       export_dir TEXT,
       updated_at TEXT NOT NULL
@@ -124,13 +124,24 @@ function bootstrap(db: Database.Database) {
         embedding_provider,
         embedding_model,
         updated_at
-      ) VALUES (1, 'heuristic', 'gemini-2.5-pro', 'heuristic', 'heuristic-embed', ?)`,
+      ) VALUES (1, 'heuristic', 'gemini-2.5-pro', 'ollama', 'nomic-embed-text', ?)`,
     ).run(nowIso());
   } else {
     db.prepare(
       `UPDATE app_settings
        SET chat_model = 'gemini-2.5-pro', updated_at = ?
        WHERE id = 1 AND (chat_model IS NULL OR chat_model = '' OR chat_model = 'heuristic-chat')`,
+    ).run(nowIso());
+    db.prepare(
+      `UPDATE app_settings
+       SET embedding_provider = 'ollama',
+           embedding_model = 'nomic-embed-text',
+           updated_at = ?
+       WHERE id = 1 AND (
+         embedding_provider IS NULL OR embedding_provider = '' OR embedding_provider = 'heuristic'
+       ) AND (
+         embedding_model IS NULL OR embedding_model = '' OR embedding_model = 'heuristic-embed'
+       )`,
     ).run(nowIso());
   }
 }

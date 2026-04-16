@@ -2,10 +2,15 @@ export type SourceType = "web" | "youtube" | "pdf";
 
 export type Citation = {
   sourceId: string;
+  segmentId?: string | null;
   sourceTitle: string;
   kind: SourceType;
   locator: string;
   quotedText: string;
+  segmentOrder?: number | null;
+  page?: number | null;
+  timestampStart?: number | null;
+  timestampEnd?: number | null;
 };
 
 export type AppSettingsRecord = {

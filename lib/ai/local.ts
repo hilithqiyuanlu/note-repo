@@ -59,16 +59,19 @@ export function localAnswer(question: string, segments: SegmentRecord[]) {
 
     return {
       sourceId: segment.sourceId,
+      segmentId: segment.id,
       sourceTitle: segment.sourceTitle,
       kind: segment.sourceType,
       locator,
       quotedText: clampText(segment.content, 180),
+      segmentOrder: segment.order,
+      page: segment.page,
+      timestampStart: segment.timestampStart,
+      timestampEnd: segment.timestampEnd,
     };
   });
 
   const answer = [
-    `问题：${question}`,
-    "",
     "基于当前 notebook，我先给出一个压缩回答：",
     segments
       .slice(0, 3)

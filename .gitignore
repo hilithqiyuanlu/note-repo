@@ -1,6 +1,7 @@
 .next
 node_modules
 storage
+.codex
 *.log
 pnpm-lock.yaml
 package-lock.json

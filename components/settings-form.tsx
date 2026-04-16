@@ -87,6 +87,7 @@ export function SettingsForm({
             onChange={(event) =>
               setSettings((current) => ({ ...current, embeddingProvider: event.target.value }))
             }
+            placeholder="ollama / openai / gemini"
             value={settings.embeddingProvider}
           />
         </label>
@@ -97,6 +98,7 @@ export function SettingsForm({
             onChange={(event) =>
               setSettings((current) => ({ ...current, embeddingModel: event.target.value }))
             }
+            placeholder="nomic-embed-text / text-embedding-3-small"
             value={settings.embeddingModel}
           />
         </label>
@@ -110,6 +112,7 @@ export function SettingsForm({
                 embeddingBaseUrl: event.target.value || null,
               }))
             }
+            placeholder="http://localhost:11434/v1"
             value={settings.embeddingBaseUrl ?? ""}
           />
         </label>

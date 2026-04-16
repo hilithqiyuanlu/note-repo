@@ -7,7 +7,12 @@ import type { Citation, ModelOption } from "@/lib/types";
 
 type JsonAnswer = {
   answer: string;
-  citations: Array<{ sourceId: string; locator: string; quotedText: string }>;
+  citations: Array<{
+    sourceId: string;
+    segmentId?: string;
+    locator: string;
+    quotedText: string;
+  }>;
 };
 
 export async function listModels(): Promise<ModelOption[]> {
@@ -193,7 +198,7 @@ export async function chatWithNotebook(params: {
 {
   "answer": "string",
   "citations": [
-    { "sourceId": "string", "locator": "string", "quotedText": "string" }
+    { "sourceId": "string", "segmentId": "string", "locator": "string", "quotedText": "string" }
   ]
 }
 
@@ -213,7 +218,7 @@ ${results
           ? `时间 ${item.timestampStart ?? 0}s`
           : `段落 ${item.order + 1}`;
 
-    return `sourceId=${item.sourceId} | title=${item.sourceTitle} | locator=${locator} | content=${item.content}`;
+    return `sourceId=${item.sourceId} | segmentId=${item.id} | title=${item.sourceTitle} | locator=${locator} | content=${item.content}`;
   })
   .join("\n")}
 
@@ -234,13 +239,20 @@ ${externalResults.map((item) => `title=${item.title} | url=${item.url} | content
     const parsed = JSON.parse(content) as JsonAnswer;
 
     const citations: Citation[] = parsed.citations.map((citation) => {
-      const matched = results.find((item) => item.sourceId === citation.sourceId);
+      const matched =
+        results.find((item) => item.id === citation.segmentId) ??
+        results.find((item) => item.sourceId === citation.sourceId);
       return {
         sourceId: citation.sourceId,
+        segmentId: matched?.id ?? citation.segmentId ?? null,
         sourceTitle: matched?.sourceTitle ?? "未知来源",
         kind: matched?.sourceType ?? "web",
         locator: citation.locator,
         quotedText: citation.quotedText,
+        segmentOrder: matched?.order ?? null,
+        page: matched?.page ?? null,
+        timestampStart: matched?.timestampStart ?? null,
+        timestampEnd: matched?.timestampEnd ?? null,
       };
     });
 

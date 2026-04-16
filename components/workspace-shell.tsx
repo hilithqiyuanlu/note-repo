@@ -67,6 +67,14 @@ type SourceDetail = {
   }>;
 };
 
+type FocusTarget = {
+  sourceId: string;
+  segmentId?: string | null;
+  page?: number | null;
+  timestampStart?: number | null;
+  nonce: string;
+};
+
 function LoadingDots() {
   return (
     <span className="inline-flex items-center gap-1">
@@ -94,12 +102,14 @@ export function WorkspaceShell({
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [threads, setThreads] = useState(initialThreads);
   const [models, setModels] = useState(initialModels);
+  const [settingsState, setSettingsState] = useState(initialSettings);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
   const [hoveredSourceId, setHoveredSourceId] = useState<string | null>(null);
   const [isEditingSummary, setIsEditingSummary] = useState(false);
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const [sourceType, setSourceType] = useState<"web" | "youtube" | "pdf">("web");
   const [sourceInput, setSourceInput] = useState("");
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -198,12 +208,13 @@ export function WorkspaceShell({
 
   const refreshSnapshot = async () => {
     const response = await fetch(`/api/notebooks/${snapshot.notebook.id}`);
-    const payload = (await response.json()) as NotebookSnapshot;
-    setSnapshot(payload);
-    setMarkdown(payload.note?.markdown || "");
-    if (!selectedSourceId && payload.sources[0]) {
-      setSelectedSourceId(payload.sources[0].id);
-    }
+      const payload = (await response.json()) as NotebookSnapshot;
+      setSnapshot(payload);
+      setMarkdown(payload.note?.markdown || "");
+      setFocusTarget(null);
+      if (!selectedSourceId && payload.sources[0]) {
+        setSelectedSourceId(payload.sources[0].id);
+      }
   };
 
   const openLeftPanel = () => {
@@ -311,6 +322,25 @@ export function WorkspaceShell({
     setQuestion("");
   };
 
+  const handleModelChange = (nextModel: string) => {
+    setSelectedModel(nextModel);
+    const nextSettings = {
+      ...settingsState,
+      chatModel: nextModel,
+    };
+    setSettingsState(nextSettings);
+    void fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nextSettings),
+    })
+      .then((response) => response.json())
+      .then((payload) => {
+        setSettingsState(payload.settings);
+      })
+      .catch(() => undefined);
+  };
+
   const sendMessage = () => {
     if (!question.trim()) {
       return;
@@ -368,8 +398,21 @@ export function WorkspaceShell({
       }));
       setSelectedSourceId(nextSelectedId);
       setSelectedSource(null);
+      setFocusTarget(null);
       setHoveredSourceId((current) => (current === deletingId ? null : current));
     });
+  };
+
+  const handleCitationClick = (citation: Citation) => {
+    setSelectedSourceId(citation.sourceId);
+    setFocusTarget({
+      sourceId: citation.sourceId,
+      segmentId: citation.segmentId ?? null,
+      page: citation.page ?? null,
+      timestampStart: citation.timestampStart ?? null,
+      nonce: `${citation.sourceId}-${citation.segmentId ?? "none"}-${Date.now()}`,
+    });
+    openLeftPanel();
   };
 
   const exportMarkdown = () => {
@@ -592,7 +635,11 @@ export function WorkspaceShell({
                     </div>
                   </div>
                   <div className="min-h-0 overflow-hidden p-3">
-                    <SourceViewer onDelete={deleteCurrentSource} source={selectedSource} />
+                    <SourceViewer
+                      focusTarget={focusTarget}
+                      onDelete={deleteCurrentSource}
+                      source={selectedSource}
+                    />
                   </div>
                 </div>
               </>
@@ -753,7 +800,7 @@ export function WorkspaceShell({
                               <button
                                 className="rounded-2xl border border-line bg-fog/80 px-3 py-3 text-left text-xs text-slate-600"
                                 key={`${message.id}-${index}`}
-                                onClick={() => setSelectedSourceId(citation.sourceId)}
+                                onClick={() => handleCitationClick(citation)}
                                 type="button"
                               >
                                 <div className="mb-1 font-medium text-slate-700">
@@ -810,7 +857,7 @@ export function WorkspaceShell({
                         </button>
                         <select
                           className="h-10 max-w-[190px] rounded-2xl border-0 bg-fog px-3 text-sm text-slate-700 outline-none"
-                          onChange={(event) => setSelectedModel(event.target.value)}
+                          onChange={(event) => handleModelChange(event.target.value)}
                           value={selectedModel}
                         >
                           {chatModels.map((model) => (

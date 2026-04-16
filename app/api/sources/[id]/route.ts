@@ -31,7 +31,7 @@ export async function DELETE(
   }
 
   source.assets.forEach((asset) => {
-    if (asset.filePath.startsWith(process.cwd()) && fs.existsSync(asset.filePath)) {
+    if (!/^https?:\/\//.test(asset.filePath) && fs.existsSync(asset.filePath)) {
       fs.rmSync(asset.filePath, { force: true });
     }
   });
